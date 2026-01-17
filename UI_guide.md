@@ -1,42 +1,49 @@
-///UI 구성///
+[Role Definition] 너는 ROS2 기반의 로봇 제어 시스템을 위한 Full-stack Web Dashboard 개발자야. 아래의 요구사항 명세(Requirements)를 바탕으로 전체 시스템의 아키텍처와 주요 코드 구조를 잡아줘.
 
-로봇 시스템 로그(작업 과정, 로봇 상태)
+[Project Goal] ROS2 로봇암(Robot Arm)의 상태를 실시간으로 DB에 저장하고, 웹 인터페이스를 통해 모니터링 및 비상 제어를 할 수 있는 대시보드 개발.
 
-로봇암 좌표, 선속도, 각속도, 베이스, 엔드이펙터
+[Core Data Flows & Features]
 
-긴급정지, 비상복구 버튼
+1. Data Pipeline (ROS2 to DB)
 
+Input: 로봇(AP)에서 ROS2 메시지로 다음 데이터를 발행함.
 
-///흐름///
+로봇 작업 상태 (On/Off, 충돌, 시스템 오류, 작업 프로세스 단계)
 
-AP가 ROS2로 웹 DB에 로그 보냄
+로봇 구동 정보 (가동 시간, 좌표, 선속도, 각속도, Base/End-effector 정보)
 
-웹 DB에 데이터 저장
+시스템 정보 (시스템명, 버전, 기기명)
 
-화면. 로봇 작업여부(온, 오프, 충돌, 시스템 오류)
+Action: 백엔드 서버는 이 데이터를 구독(Subscribe)하여 웹 DB에 실시간으로 저장해야 함.
 
-화면. 로봇 상태(작업 프로세스)
+2. Frontend Dashboard (Monitoring UI)
 
-화면. 로봇 상태(가동시간)
+General: 웹 접속 시 대시보드 UI 로드.
 
-화면. 로봇 위치(좌표)
+Status Panel:
 
-화면. 시스템명, 시스템 버전명, 기기명
+로봇 작업 여부 및 상태 표시 (Status Indicator)
 
-화면. DB 버튼
+작업 프로세스 및 가동 시간 표시
 
-화면. 웹 DB에 화면출력
+시스템/기기 정보 텍스트 표시
 
-화면. 웹 DB에 로봇암 현재모양 출력
+Visualization:
 
-버튼. 로그출력
+DB에 저장된 좌표 데이터를 기반으로 로봇암의 현재 모양(Pose)을 시각화 (Digital Twin 형태)
 
-버튼. 직전 60초간 작업내용 10Hz 단위로 출력
+Data Grid: DB에 저장된 데이터를 테이블 형태로 출력하는 화면 필요.
 
-웹에 접속하면 UI가 출력
+3. Control & Interaction (User Action)
 
-데이터 받아야 함
+Safety Control:
 
-데이터를 디비에 저장
+[긴급정지] 및 [비상복구] 버튼 구현 (누를 시 즉시 로봇 제어 명령 전송)
 
-디비에서 데이터 출력
+Log & History:
+
+[로그 출력] 버튼: 시스템 로그 조회
+
+[Replay] 버튼: 직전 60초간의 작업 내용을 10Hz 단위(총 600개 프레임)로 불러와서 확인하거나 출력하는 기능
+
+[Task] 위 3가지 흐름을 구현하기 위한 **프로젝트 파일 구조(File Structure)**와 기술 스택(Tech Stack), 그리고 핵심 컴포넌트 설계를 제안해줘.
