@@ -58,14 +58,14 @@ def xy_check_slot():
             dx = 0
             dy = 0
             if tx > 0:
-                dx = +5
+                dx = +3
             elif tx < 0:
-                dx = -5
+                dx = -3
 
             if ty > 0:
-                dy = +5
+                dy = +3
             elif ty < 0:
-                dy = -5
+                dy = -3
             # 힘 제어 해제
             end_force()
             # 이동
