@@ -1,0 +1,69 @@
+# ============================
+# MOVEJ ROUND-TRIP TEST (NO tp_popup)
+# - movel 없음
+# - tp_popup 없음
+# - SYNC / ASYNC 둘 다 포함 (원하면 하나만 남겨도 됨)
+# ============================
+
+# 테스트 포인트
+P1 = posx(722.28, 200.46, 201.28, 158.41, 179.96, 158.79)
+P2 = posx(379.89, -247.05, 115.68, 114.63, -179.93, 115.51)
+
+VJ = 70
+AJ = 70
+DWELL = 0.2
+N_ROUND = 5
+
+def go_movej_sync(p):
+    q = ikin_norm(p, 0)
+    movej(q, v=VJ, a=AJ)
+
+def go_movej_async(p):
+    q = ikin_norm(p, 0)
+    movej(q, v=VJ, a=AJ, async=True)
+
+def wait_done():
+    wait_motion()
+
+def main_sync():
+    # 시작 위치
+    go_movej_sync(P1)
+    wait(0.3)
+
+    k = 0
+    while k < N_ROUND:
+        go_movej_sync(P2)
+        wait(DWELL)
+
+        go_movej_sync(P1)
+        wait(DWELL)
+
+        k = k + 1
+
+main_sync()
+
+
+def main_async():
+    # 시작 위치
+    go_movej_async(P1)
+    wait_done()
+    wait(0.3)
+
+    k = 0
+    while k < N_ROUND:
+        go_movej_async(P2)
+        wait_done()
+        wait(DWELL)
+
+        go_movej_async(P1)
+        wait_done()
+        wait(DWELL)
+
+        k = k + 1
+main_async()
+
+
+
+# ---- 실행 선택 ----
+# 1) 동기만 실행하려면 main_sync()만 남기고 main_async()는 주석 처리
+# 2) 비동기만 실행하려면 main_async()만 남기고 main_sync()는 주석 처리
