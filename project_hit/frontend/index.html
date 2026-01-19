@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project H.I.T - Robot Monitor Dashboard</title>
+    
+    <!-- External Libraries (Global Scripts - NOT modules) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+    
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body>
+    <div class="container">
+        <!-- ========== Header ========== -->
+        <div class="header">
+            <h1>⚙️ Project H.I.T - Robot Monitor</h1>
+            <div id="connection-status">🔴 Initializing...</div>
+        </div>
+
+        <!-- ========== Main Grid ========== -->
+        <div class="grid">
+            <!-- Status Panel -->
+            <div class="card">
+                <h3>Current Task Status</h3>
+                <div id="status-box" class="WAITING">WAITING</div>
+                <div class="data-row" style="margin-top: 16px;">
+                    <span class="data-label">Operational Time:</span>
+                    <span class="data-value"><span id="operational-time">0.00</span> h</span>
+                </div>
+            </div>
+
+            <!-- Position & Force Panel -->
+            <div class="card">
+                <h3>Robot TCP Position & Force</h3>
+                <div class="data-row">
+                    <span class="data-label">X Position:</span>
+                    <span class="data-value"><span id="pos-x">0.0</span> mm</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Y Position:</span>
+                    <span class="data-value"><span id="pos-y">0.0</span> mm</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Z Position:</span>
+                    <span class="data-value"><span id="pos-z">0.0</span> mm</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Z-Axis Force:</span>
+                    <span class="data-value"><span id="force-z">0.0</span> N</span>
+                </div>
+            </div>
+
+            <!-- System Information -->
+            <div class="card">
+                <h3>System Information</h3>
+                <div class="data-row">
+                    <span class="data-label">Robot Name:</span>
+                    <span class="data-value" id="system-name">N/A</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Version:</span>
+                    <span class="data-value" id="system-version">N/A</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Device ID:</span>
+                    <span class="data-value" id="system-device">N/A</span>
+                </div>
+            </div>
+
+            <!-- Force Graph -->
+            <div class="card grid-full">
+                <h3>Z-Axis Force Trend (Real-time)</h3>
+                <div class="chart-container">
+                    <canvas id="forceChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Joint Angles Panel -->
+            <div class="card grid-full">
+                <h3>📐 Joint Angles (Degrees)</h3>
+                <div class="joints-panel">
+                    <div class="joint-row">
+                        <div class="joint-item">
+                            <label>J1</label>
+                            <div class="gauge-container">
+                                <div class="gauge-fill" id="joint-gauge-0"></div>
+                            </div>
+                            <span class="gauge-value" id="joint-value-0">0.0°</span>
+                        </div>
+                        <div class="joint-item">
+                            <label>J2</label>
+                            <div class="gauge-container">
+                                <div class="gauge-fill" id="joint-gauge-1"></div>
+                            </div>
+                            <span class="gauge-value" id="joint-value-1">0.0°</span>
+                        </div>
+                        <div class="joint-item">
+                            <label>J3</label>
+                            <div class="gauge-container">
+                                <div class="gauge-fill" id="joint-gauge-2"></div>
+                            </div>
+                            <span class="gauge-value" id="joint-value-2">0.0°</span>
+                        </div>
+                    </div>
+                    <div class="joint-row">
+                        <div class="joint-item">
+                            <label>J4</label>
+                            <div class="gauge-container">
+                                <div class="gauge-fill" id="joint-gauge-3"></div>
+                            </div>
+                            <span class="gauge-value" id="joint-value-3">0.0°</span>
+                        </div>
+                        <div class="joint-item">
+                            <label>J5</label>
+                            <div class="gauge-container">
+                                <div class="gauge-fill" id="joint-gauge-4"></div>
+                            </div>
+                            <span class="gauge-value" id="joint-value-4">0.0°</span>
+                        </div>
+                        <div class="joint-item">
+                            <label>J6</label>
+                            <div class="gauge-container">
+                                <div class="gauge-fill" id="joint-gauge-5"></div>
+                            </div>
+                            <span class="gauge-value" id="joint-value-5">0.0°</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Emergency Controls -->
+            <div class="card">
+                <h3>🚨 Emergency Controls</h3>
+                <div class="button-group">
+                    <button id="btn-emergency-stop" class="btn btn-danger">
+                        ⏹️ EMERGENCY STOP
+                    </button>
+                    <button id="btn-emergency-recover" class="btn btn-success">
+                        ✅ RECOVER
+                    </button>
+                </div>
+            </div>
+
+            <!-- Log & History -->
+            <div class="card">
+                <h3>📊 Log & History (60s)</h3>
+                <div class="button-group">
+                    <button id="btn-load-logs" class="btn btn-primary">
+                        📥 Load Logs
+                    </button>
+                    <button id="btn-start-replay" class="btn btn-warning" disabled>
+                        ▶️ Start Replay
+                    </button>
+                    <button id="btn-clear-logs" class="btn btn-danger">
+                        🗑️ Clear Logs
+                    </button>
+                </div>
+                <div id="replay-info" style="margin-top: 12px; color: #aaa; font-size: 0.9em;">
+                    No logs loaded yet
+                </div>
+            </div>
+
+            <!-- Print Logs -->
+            <div class="card">
+                <h3>📄 Export & Print</h3>
+                <div class="button-group">
+                    <button id="btn-print-logs" class="btn btn-primary">
+                        🖨️ Print Logs
+                    </button>
+                    <button id="btn-update-grid" class="btn btn-primary">
+                        🔄 Refresh Data
+                    </button>
+                </div>
+            </div>
+
+            <!-- Data Grid -->
+            <div class="card grid-full">
+                <h3>Current Data Values</h3>
+                <div class="data-grid">
+                    <table id="data-grid">
+                        <thead>
+                            <tr>
+                                <th>Parameter</th>
+                                <th>Value</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td>Status</td><td id="grid-status">-</td></tr>
+                            <tr><td>Force Z</td><td id="grid-force">-</td></tr>
+                            <tr><td>Position X</td><td id="grid-pos-x">-</td></tr>
+                            <tr><td>Position Y</td><td id="grid-pos-y">-</td></tr>
+                            <tr><td>Position Z</td><td id="grid-pos-z">-</td></tr>
+                            <tr><td>Operational Time</td><td id="grid-optime">-</td></tr>
+                            <tr><td>Last Update</td><td id="grid-timestamp">-</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Robot Logs Console -->
+            <div class="card grid-full">
+                <h3>🖥️ Robot Logs (Terminal Console)</h3>
+                <div id="log-console" class="log-console">
+                    <div class="log-line" style="color: #888;">[Waiting for logs...]</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== Replay Modal ========== -->
+    <div id="replay-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>📹 Replay History (60 seconds)</h2>
+                <button class="modal-close" onclick="document.getElementById('replay-modal').classList.remove('active')">✕</button>
+            </div>
+            
+            <div style="margin-bottom: 16px;">
+                <label>Replay Speed: <input id="replay-speed" type="range" min="0.5" max="3" step="0.5" value="1" style="width: 200px;">
+                <span id="speed-value">1x</span></label>
+            </div>
+
+            <div class="chart-container" style="height: 300px;">
+                <canvas id="replayChart"></canvas>
+            </div>
+
+            <div id="replay-frame-info" style="margin-top: 16px; padding: 12px; background: rgba(0, 188, 212, 0.1); border-radius: 6px; color: #00bcd4; font-size: 0.9em;">
+                Waiting to start replay...
+            </div>
+
+            <div class="button-group" style="margin-top: 16px;">
+                <button id="btn-stop-replay" class="btn btn-danger" disabled>
+                    ⏹️ Stop Replay
+                </button>
+                <button onclick="document.getElementById('replay-modal').classList.remove('active')" class="btn btn-primary">
+                    ✕ Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== Scripts ========== -->
+    <!-- 1. Chart.js (전역 라이브러리) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+    
+    <!-- 2. Firebase REST API 클라이언트 (모듈 없이 간단한 스크립트) -->
+    <script src="js/firebase-rest.js"></script>
+</body>
+</html>

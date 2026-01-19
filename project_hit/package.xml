@@ -12,8 +12,6 @@
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>std_srvs</depend>
-  <exec_depend>dsr_common2</exec_depend>
-  <exec_depend>dsr_msgs2</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

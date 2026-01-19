@@ -1,0 +1,15 @@
+{
+  "project_id": "rokey-b-3",
+  "database_url": "https://rokey-b-3-default-rtdb.firebaseio.com",
+  "api_key": "AIzaSyCVaEaIp1lyqLlvKR7rBFDpLNyp3Iavx48",
+  "auth_domain": "rokey-b-3.firebaseapp.com",
+  "storage_bucket": "rokey-b-3.firebasestorage.app",
+  "messaging_sender_id": "845506185932",
+  "app_id": "1:845506185932:web:6a4a0b2c44992633151069",
+  "measurement_id": "G-1HKVQ6P0Y2",
+  "database_paths": {
+    "current_status": "/one",
+    "logs": "/one/logs",
+    "emergency_command": "/one/emergencyStop"
+  }
+}

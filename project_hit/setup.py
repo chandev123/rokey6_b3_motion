@@ -25,9 +25,12 @@ setup(
     license='TODO: License declaration',
     entry_points={
         'console_scripts': [
-            'task_controller_node = project_hit.task_controller_node:main',
-            'robot_interface_node = project_hit.robot_interface_node:main',
-            'gripper_service_node = project_hit.gripper_service_node:main',
+            # Main nodes
+            'robot_monitor_firebase_node = project_hit.robot_monitor_firebase_node:main',
+            
+            # Testing nodes
+            'robot_simulator = project_hit.robot_simulator:main',
+            'comprehensive_test = project_hit.comprehensive_test:main',
         ],
     },
 )
