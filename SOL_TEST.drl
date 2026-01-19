@@ -98,9 +98,8 @@ def run_case(case_name, go_func, async_mode):
     t1 = now_sec()
     dt = t1 - t0
 
-    tp_popup(case_name + " DONE: " + f"{dt:.3f}" + " sec")
+    tp_popup(f"{case_name} DONE: {dt:.3f} sec")
     return dt
-
 
 def main():
     # 시작 위치 안정화
