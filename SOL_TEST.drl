@@ -1,0 +1,133 @@
+# ============================================================
+# DRL Motion Benchmark (SYNC/ASYNC x movej/movel) + IK wrapper
+# - movej는 ikin_norm을 이용해 posx -> joint로 변환 후 수행
+# ============================================================
+
+# --------------------------
+# Test points (posx, mm/deg)
+# --------------------------
+P1 = posx(722.28, 200.46, 201.28, 158.41, 179.96, 158.79)              # HOME 예시
+P2 = posx(379.89, -247.05, 115.68, 114.63, -179.93, 115.51)         # S2_ALIGN_ABS 예시
+
+# --------------------------
+# Speed/Acc
+# --------------------------
+VJ = 70; AJ = 70
+VL = 70; AL = 70
+DWELL = 0.10
+N_ROUNDTRIP = 5
+
+# --------------------------
+# IK 설정(★정의까지 포함)
+# --------------------------
+# 아래 SOL_SPACE 상수는 환경마다 이름이 다를 수 있음.
+# 1) 가장 흔한 후보: DR_SOL_SPACE_BASE
+# 2) 없으면 자동완성에서 뜨는 것으로 바꿔 끼우면 됨.
+#
+# 예) SOL_SPACE = DR_SOL_SPACE_TASK
+# 예) SOL_SPACE = DR_SOL_SPACE_WORLD
+# 예) SOL_SPACE = DR_SOL_SPACE_JOINT
+SOL_SPACE = DR_SOL_SPACE_BASE
+
+# 여러 IK 해 중 어떤 것을 쓸지 (보통 0)
+IK_SOL_IDX = 0
+
+def ik_posx_to_joint(p):
+    # 네 환경 기준: ikin_norm(pose, sol_space, sol_idx) 형태 가정
+    # 반환 q는 movej에 넣을 joint 리스트(또는 joint 타입)여야 함
+    return ikin_norm(p, SOL_SPACE, IK_SOL_IDX)
+
+# --------------------------
+# 시간 함수(환경에 따라 없을 수 있음)
+# --------------------------
+def now_sec():
+    # get_current_time_ms()가 있으면 가장 편함.
+    # 없으면 아래 줄이 에러날 수 있는데, 그 경우 dt 측정 대신 케이스별 "체감" 비교로만 사용해도 됨.
+    return get_current_time_ms() / 1000.0
+
+
+# --------------------------
+# 완료 대기(★환경에 맞게 1개만 살아있으면 됨)
+# --------------------------
+def wait_done():
+    wait_motion()
+
+
+# --------------------------
+# Motion funcs
+# --------------------------
+def go_sync_movej(p):
+    q = ik_posx_to_joint(p)
+    movej(q, v=VJ, a=AJ)
+
+def go_sync_movel(p):
+    movel(p, v=VL, a=AL)
+
+def go_async_movej(p):
+    q = ik_posx_to_joint(p)
+    movej(q, v=VJ, a=AJ, async=True)
+
+def go_async_movel(p):
+    movel(p, v=VL, a=AL, async=True)
+
+
+# --------------------------
+# Runner
+# --------------------------
+def run_case(case_name, go_func, async_mode):
+    tp_popup("START: " + case_name)
+
+    t0 = now_sec()
+
+    for k in range(N_ROUNDTRIP):
+        # P1 -> P2
+        go_func(P2)
+        if async_mode:
+            wait_done()
+        wait(DWELL)
+
+        # P2 -> P1
+        go_func(P1)
+        if async_mode:
+            wait_done()
+        wait(DWELL)
+
+    # 마지막 완료 보장
+    wait_done()
+
+    t1 = now_sec()
+    dt = t1 - t0
+
+    tp_popup(case_name + " DONE: " + f"{dt:.3f}" + " sec")
+    return dt
+
+
+def main():
+    # 시작 위치 안정화
+    movel(P1, v=VL, a=AL)
+    wait_done()
+    wait(0.2)
+
+    results = []
+
+    # 1) SYNC + movej
+    dt1 = run_case("SYNC + movej(ikin_norm)", go_sync_movej, async_mode=False)
+    results.append(("SYNC + movej(ikin_norm)", dt1))
+
+    # 2) SYNC + movel
+    dt2 = run_case("SYNC + movel", go_sync_movel, async_mode=False)
+    results.append(("SYNC + movel", dt2))
+
+    # 3) ASYNC + movej
+    dt3 = run_case("ASYNC + movej(ikin_norm)", go_async_movej, async_mode=True)
+    results.append(("ASYNC + movej(ikin_norm)", dt3))
+
+    # 4) ASYNC + movel
+    dt4 = run_case("ASYNC + movel", go_async_movel, async_mode=True)
+    results.append(("ASYNC + movel", dt4))
+
+    tp_popup("RESULTS (sec):")
+    for name, dt in results:
+        tp_popup(name + " = " + f"{dt:.3f}")
+
+main()
