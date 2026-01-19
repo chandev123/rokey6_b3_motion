@@ -1,0 +1,4 @@
+[console_scripts]
+gripper_service_node = project_hit.gripper_service_node:main
+robot_interface_node = project_hit.robot_interface_node:main
+task_controller_node = project_hit.task_controller_node:main

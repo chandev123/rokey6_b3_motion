@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: project_hit
+Version: 0.0.1
+Summary: Project H.I.T - Tactile-based Robot Arm Motion Control
+Maintainer: user
+Maintainer-email: user@todo.todo
+License: TODO: License declaration
+Requires-Dist: setuptools
+Dynamic: license
+Dynamic: maintainer
+Dynamic: maintainer-email
+Dynamic: requires-dist
+Dynamic: summary
