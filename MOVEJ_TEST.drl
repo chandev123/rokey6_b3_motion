@@ -1,69 +1,57 @@
 # ============================
-# MOVEJ ROUND-TRIP TEST (NO tp_popup)
-# - movel 없음
-# - tp_popup 없음
-# - SYNC / ASYNC 둘 다 포함 (원하면 하나만 남겨도 됨)
+# SYNC Pick & Place Loop (NO tp_popup, NO movel)
+# - movej만 사용 (q1/q2)
+# - 1번 위치에서 집고, 2번 위치에서 놓기
+# - 3회 반복
 # ============================
 
-# 테스트 포인트
-q1 = [24.73, 26.23, 109.51, -151.30, 51.40, 162.57] 
-q2 = [-33.49, 12.52, 85.29, 0.03, 82.14, -32.99] 
+# 관절 목표 (deg)
+q1 = [24.73, 26.23, 109.51, -151.30, 51.40, 162.57]      # Pick 위치
+q2 = [-33.49, 12.52, 85.29, 0.03, 82.14, -32.99]         # Place 위치
 
 VJ = 70
 AJ = 70
-DWELL = 0.2
-N_ROUND = 5
 
-def go_movej_sync(p):
-    q = ikin_norm(p, 0)
-    movej(q, v=VJ, a=AJ)
+DWELL_MOVE = 0.2      # 이동 후 안정화 대기
+DWELL_GRIP = 1.0      # 그리퍼 동작 대기
+N_REPEAT = 3
 
-def go_movej_async(p):
-    q = ikin_norm(p, 0)
-    movej(q, v=VJ, a=AJ, async=True)
+def open_gripper():
+    set_digital_output(2, ON)
+    wait(DWELL_GRIP)
+    set_digital_output(2, OFF)
 
-def wait_done():
-    wait_motion()
+def close_gripper():
+    set_digital_output(1, ON)
+    wait(DWELL_GRIP)
+    set_digital_output(1, OFF)
 
-def main_sync():
-    # 시작 위치
-    go_movej_sync(P1)
-    wait(0.3)
+def main():
+    # 시작: 안전하게 오픈 상태로 가정
+    open_gripper()
+
+    # 처음 픽 위치로 이동
+    movej(q1, v=VJ, a=AJ)
+    wait(DWELL_MOVE)
 
     k = 0
-    while k < N_ROUND:
-        go_movej_sync(P2)
-        wait(DWELL)
+    while k < N_REPEAT:
+        # 1) Pick at q1
+        close_gripper()
+        wait(0.1)
 
-        go_movej_sync(P1)
-        wait(DWELL)
+        # 2) Go to place q2
+        movej(q2, v=VJ, a=AJ)
+        wait(DWELL_MOVE)
+
+        # 3) Place at q2
+        open_gripper()
+        wait(0.1)
+
+        # 4) Return to pick q1 (다음 반복 준비)
+        movej(q1, v=VJ, a=AJ)
+        wait(DWELL_MOVE)
 
         k = k + 1
 
-main_sync()
-
-
-def main_async():
-    # 시작 위치
-    go_movej_async(P1)
-    wait_done()
-    wait(0.3)
-
-    k = 0
-    while k < N_ROUND:
-        go_movej_async(P2)
-        wait_done()
-        wait(DWELL)
-
-        go_movej_async(P1)
-        wait_done()
-        wait(DWELL)
-
-        k = k + 1
-main_async()
-
-
-
-# ---- 실행 선택 ----
-# 1) 동기만 실행하려면 main_sync()만 남기고 main_async()는 주석 처리
-# 2) 비동기만 실행하려면 main_async()만 남기고 main_sync()는 주석 처리
+main()
