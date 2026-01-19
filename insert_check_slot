@@ -93,4 +93,6 @@ def insert_card_slot():
 
     # 그리퍼 열기
     open_gripper()
-    
+
+# 로그
+# tp_log(x,y,z,rx,ry,rz)  
