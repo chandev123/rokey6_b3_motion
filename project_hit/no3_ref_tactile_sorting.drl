@@ -1,0 +1,409 @@
+####################################################################
+# DRL Pick and Place with Height Measurement and Size Sorting
+# Robot Model: Doosan M0609
+# 
+# 기능: Source Pallet에서 물건을 집어 높이를 측정하고,
+#      크기(대/중/소)에 따라 분류하여 Dest Pallet에 적재
+####################################################################
+
+# =================================================================
+# 1. 기본 설정
+# =================================================================
+set_velj(30.0)  # 조인트 속도 설정 (%)
+set_accj(30.0)  # 조인트 가속도 설정 (%)
+set_velx(100.0, 30.0)  # 직교좌표 속도 설정 (mm/s, deg/s)
+set_accx(100.0, 30.0)  # 직교좌표 가속도 설정 (mm/s^2, deg/s^2)
+
+# 그리퍼 DO 설정 (실제 환경에 맞게 수정 필요)
+GRIPPER_OPEN = 1
+GRIPPER_CLOSE = 2
+
+# =================================================================
+# 2. 좌표 정의
+# =================================================================
+
+# Home Position (안전 위치)
+home_pos = posj(0.0, 0.0, 90.0, 0.0, 90.0, 0.0)
+
+# Source Pallet (가져올 곳 - 3단 적재)
+x1 = posx(400, -50, 300, 20.7806, 179.5791, 21.3655)
+x2 = posx(400, -150, 300, 48.4023, 179.2170, 49.3191)
+x3 = posx(500, -150, 300, 76.9858, 178.9296, 77.5844)
+x4 = posx(500, -50, 300, 45.2451, 179.4428, 45.9098)
+
+# Dest Pallet (놓을 곳 - 크기별 분류)
+# Large (대) - y1 기준
+y1 = posx(400, 50, 300, 158.491, 179.965, 158.877)
+# Medium (중) - y2 기준
+y2 = posx(490, 50, 300, 158.491, 179.965, 158.877)
+# Small (소) - y3 기준
+y3 = posx(490, 160, 300, 158.491, 179.965, 158.877)
+# 예비 위치
+y4 = posx(400, 160, 300, 158.491, 179.965, 158.877)
+
+# =================================================================
+# 3. 패턴 설정
+# =================================================================
+direction = 0
+row = 3
+column = 3
+stack = 3  # 3층 쌓기
+thickness = 2.7
+point_offset = [0, 0, 0]
+
+# Total count 계산
+if direction < 2:
+    total_count = row * column * stack
+else:
+    total_count = (row * column - int(row / 2)) * stack
+
+# 접근 높이 오프셋
+APPROACH_HEIGHT = 100.0  # mm
+
+# 높이 측정 기준값 (Z축 값)
+HEIGHT_LARGE = 283.5   # 대 (Large)
+HEIGHT_MEDIUM = 275.3  # 중 (Medium)
+# 나머지는 소 (Small)
+
+# 힘 감지 임계값
+FORCE_THRESHOLD_MIN = 3.0  # N
+FORCE_THRESHOLD_MAX = 5.0  # N
+
+# 안전 타임아웃 (무한루프 방지)
+MAX_DESCENT_TIME = 10.0  # 초
+
+# 크기별 적재 카운터
+large_count = 0
+medium_count = 0
+small_count = 0
+
+# =================================================================
+# 4. 유틸리티 함수
+# =================================================================
+
+def grip_open():
+    """그리퍼 열기"""
+    set_digital_output(GRIPPER_OPEN, ON)
+    set_digital_output(GRIPPER_CLOSE, OFF)
+    wait(0.5)
+
+def grip_close():
+    """그리퍼 닫기 (물건 집기)"""
+    set_digital_output(GRIPPER_OPEN, OFF)
+    set_digital_output(GRIPPER_CLOSE, ON)
+    wait(0.5)
+
+def get_current_position_safe():
+    """
+    현재 위치를 안전하게 가져오기
+    데이터 누락 방지를 위한 재시도 로직 포함
+    """
+    max_retries = 3
+    for i in range(max_retries):
+        try:
+            pos_data = get_current_posx()
+            if pos_data is not None and len(pos_data) > 0:
+                # get_current_posx()는 (posx, sol_space) 튜플 반환
+                if isinstance(pos_data, tuple):
+                    return pos_data[0]
+                return pos_data
+        except:
+            wait(0.1)
+    
+    # 실패 시 에러 처리
+    tp_popup("위치 데이터 획득 실패!", DR_PM_WARNING)
+    return None
+
+def calculate_approach_position(target_pos, height_offset):
+    """
+    목표 위치의 상공 위치 계산
+    """
+    approach_pos = posx(
+        target_pos[0],      # X
+        target_pos[1],      # Y
+        target_pos[2] + height_offset,  # Z + offset
+        target_pos[3],      # Rx
+        target_pos[4],      # Ry
+        target_pos[5]       # Rz
+    )
+    return approach_pos
+
+# =================================================================
+# 5. 높이 측정 및 픽업 함수
+# =================================================================
+
+def measure_and_pick(source_pos):
+    """
+    물체의 높이를 측정하고 픽업하는 함수
+    
+    Args:
+        source_pos: Source 위치 (posx)
+    
+    Returns:
+        size_code: 1(대), 2(중), 3(소), -1(에러)
+    """
+    
+    # 1. 그리퍼 열기
+    grip_open()
+    
+    # 2. Source 위치 상공 100mm로 접근
+    approach_pos = calculate_approach_position(source_pos, APPROACH_HEIGHT)
+    movel(approach_pos, vel=100, acc=100)
+    
+    # 3. Compliance(힘 제어) 기능 활성화
+    # 파라미터: stiffness[6], damping[6], time, mode
+    stiffness = [500, 500, 500, 100, 100, 100]
+    damping = [50, 50, 50, 10, 10, 10]
+    task_compliance_ctrl(stiffness, damping, 0.0, DR_TC_ON)
+    
+    # Compliance 안정화 대기
+    wait(0.3)
+    
+    # 4. 하강 목표 위치 설정 (충분히 낮은 위치)
+    descent_target = posx(
+        source_pos[0],
+        source_pos[1],
+        source_pos[2] - 50,  # 예상 물체 위치보다 더 낮게
+        source_pos[3],
+        source_pos[4],
+        source_pos[5]
+    )
+    
+    # 5. 비동기 이동으로 천천히 하강하면서 힘 감지
+    amovel(descent_target, vel=30, acc=30)
+    
+    # 안전 타이머 시작
+    start_time = get_system_time()
+    contact_detected = False
+    measured_z = 0.0
+    
+    while True:
+        # 힘 조건 확인 (Z축 힘이 임계값 초과 시 접촉으로 판단)
+        force_data = check_force_condition(
+            DR_AXIS_Z,           # Z축 기준
+            max=FORCE_THRESHOLD_MAX,
+            min=FORCE_THRESHOLD_MIN,
+            ref=DR_TOOL           # Tool 좌표계 기준
+        )
+        
+        if force_data == 0:  # 힘 조건 충족 (접촉 감지)
+            contact_detected = True
+            stop(DR_QSTOP)  # 즉시 정지
+            wait(0.1)
+            break
+        
+        # 안전 타임아웃 체크 (무한루프 방지)
+        elapsed_time = (get_system_time() - start_time) / 1000.0  # ms to s
+        if elapsed_time > MAX_DESCENT_TIME:
+            stop(DR_QSTOP)
+            tp_popup("타임아웃: 물체를 찾지 못했습니다!", DR_PM_WARNING)
+            task_compliance_ctrl(stiffness, damping, 0.0, DR_TC_OFF)
+            # 안전 위치로 복귀
+            movel(approach_pos, vel=100, acc=100)
+            return -1
+        
+        # 이동 완료 확인
+        if check_motion() == 0:  # 이동 완료
+            break
+        
+        wait(0.01)  # CPU 부하 감소
+    
+    # 6. Compliance 비활성화
+    task_compliance_ctrl(stiffness, damping, 0.0, DR_TC_OFF)
+    wait(0.2)
+    
+    # 7. 현재 Z축 높이 측정
+    current_pos = get_current_position_safe()
+    if current_pos is None:
+        movel(approach_pos, vel=100, acc=100)
+        return -1
+    
+    measured_z = current_pos[2]
+    tp_log("측정된 Z 높이: " + str(measured_z))
+    
+    # 8. 크기 판단
+    if measured_z >= HEIGHT_LARGE:
+        size_code = 1  # 대 (Large)
+        tp_log("크기 판정: 대 (Large)")
+    elif measured_z >= HEIGHT_MEDIUM:
+        size_code = 2  # 중 (Medium)
+        tp_log("크기 판정: 중 (Medium)")
+    else:
+        size_code = 3  # 소 (Small)
+        tp_log("크기 판정: 소 (Small)")
+    
+    # 9. 물건 집기
+    grip_close()
+    wait(0.3)
+    
+    # 10. 안전하게 상공으로 복귀
+    movel(approach_pos, vel=100, acc=100)
+    
+    return size_code
+
+# =================================================================
+# 6. 적재 함수
+# =================================================================
+
+def place_block(dest_pos, stack_level):
+    """
+    물건을 안전하게 적재하는 함수
+    
+    Args:
+        dest_pos: Destination 기준 위치 (posx)
+        stack_level: 현재 적재 층 (0, 1, 2, ...)
+    """
+    
+    # 적재 높이 계산 (층 * 두께)
+    stack_height = stack_level * thickness
+    
+    # 실제 적재 위치
+    place_pos = posx(
+        dest_pos[0],
+        dest_pos[1],
+        dest_pos[2] + stack_height,
+        dest_pos[3],
+        dest_pos[4],
+        dest_pos[5]
+    )
+    
+    # 1. 목표 위치 상공으로 이동
+    approach_pos = calculate_approach_position(place_pos, APPROACH_HEIGHT)
+    movel(approach_pos, vel=150, acc=150)
+    
+    # 2. 적재 위치로 하강
+    movel(place_pos, vel=80, acc=80)
+    
+    # 3. 물건 놓기
+    grip_open()
+    wait(0.3)
+    
+    # 4. 상공으로 복귀
+    movel(approach_pos, vel=150, acc=150)
+
+def get_dest_position_by_size(size_code):
+    """
+    크기 코드에 따른 목적지 위치 및 스택 레벨 반환
+    
+    Args:
+        size_code: 1(대), 2(중), 3(소)
+    
+    Returns:
+        (dest_pos, stack_level)
+    """
+    global large_count, medium_count, small_count
+    
+    if size_code == 1:  # 대 (Large) -> y1 기준
+        dest_base = y1
+        stack_level = large_count % stack  # 스택 순환
+        # 패턴 내 인덱스 계산
+        pattern_idx = large_count // stack
+        large_count += 1
+    elif size_code == 2:  # 중 (Medium) -> y2 기준
+        dest_base = y2
+        stack_level = medium_count % stack
+        pattern_idx = medium_count // stack
+        medium_count += 1
+    else:  # 소 (Small) -> y3 기준
+        dest_base = y3
+        stack_level = small_count % stack
+        pattern_idx = small_count // stack
+        small_count += 1
+    
+    # 패턴 내 위치 오프셋 계산 (간단한 그리드 배치)
+    row_idx = pattern_idx // column
+    col_idx = pattern_idx % column
+    
+    # 오프셋 적용 (각 셀 간격은 90mm로 가정)
+    cell_spacing = 90.0
+    dest_pos = posx(
+        dest_base[0] + (col_idx * cell_spacing),
+        dest_base[1] + (row_idx * cell_spacing),
+        dest_base[2],
+        dest_base[3],
+        dest_base[4],
+        dest_base[5]
+    )
+    
+    return (dest_pos, stack_level)
+
+# =================================================================
+# 7. 메인 루프
+# =================================================================
+
+def main():
+    """메인 프로그램"""
+    global large_count, medium_count, small_count
+    
+    tp_log("=== Pick and Place with Size Sorting 시작 ===")
+    tp_log("총 작업 개수: " + str(total_count))
+    
+    # 초기화
+    large_count = 0
+    medium_count = 0
+    small_count = 0
+    
+    # Home 위치로 이동
+    movej(home_pos, vel=30, acc=30)
+    
+    # 그리퍼 초기화 (열기)
+    grip_open()
+    
+    # 성공/실패 카운터
+    success_count = 0
+    fail_count = 0
+    
+    # Source Pallet에서 물건 하나씩 처리
+    for i in range(total_count):
+        tp_log("--- 작업 #" + str(i + 1) + "/" + str(total_count) + " ---")
+        
+        # Source 팔레트에서 위치 계산 (get_pattern_point 사용)
+        source_pos = get_pattern_point(
+            x1, x2, x3, x4,
+            i,              # 인덱스
+            direction,      # 방향
+            row,            # 행 수
+            column,         # 열 수
+            stack,          # 스택 수
+            thickness,      # 두께
+            point_offset    # 오프셋
+        )
+        
+        tp_log("Source 위치: " + str(source_pos))
+        
+        # 높이 측정 및 픽업
+        size_code = measure_and_pick(source_pos)
+        
+        if size_code == -1:
+            # 에러 발생 시 다음 물건으로
+            tp_log("물건 #" + str(i + 1) + " 처리 실패")
+            fail_count += 1
+            continue
+        
+        # 크기에 따른 목적지 결정
+        dest_pos, stack_level = get_dest_position_by_size(size_code)
+        
+        tp_log("Dest 위치: " + str(dest_pos) + ", Stack Level: " + str(stack_level))
+        
+        # 물건 적재
+        place_block(dest_pos, stack_level)
+        
+        success_count += 1
+        tp_log("물건 #" + str(i + 1) + " 완료")
+    
+    # 작업 완료 - Home 위치로 복귀
+    tp_log("=== 작업 완료 ===")
+    tp_log("성공: " + str(success_count) + ", 실패: " + str(fail_count))
+    tp_log("대: " + str(large_count) + "개, 중: " + str(medium_count) + "개, 소: " + str(small_count) + "개")
+    
+    movej(home_pos, vel=30, acc=30)
+    grip_open()
+    
+    tp_popup("작업 완료!\n성공: " + str(success_count) + "\n실패: " + str(fail_count), DR_PM_MESSAGE)
+
+# =================================================================
+# 8. 프로그램 실행
+# =================================================================
+
+# 메인 함수 실행
+main()
