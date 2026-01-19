@@ -1,0 +1,256 @@
+# ============================================================
+# DRL MERGED PROGRAM
+# - Shelf1 pick (X_PULL)
+# - Shelf2 align/insert with force + XY correction (your latest while-loop)
+# - Shelf3 place (Z_UP)
+# ============================================================
+
+# --------------------------
+# Shelf spacing (mm)
+# --------------------------
+DX = 60.0
+DY = 60.0
+DZ = 60.0
+
+Z_UP   = 100.0
+X_PULL = -100.0
+INSPECT_TIME = 4.0
+
+# --------------------------
+# Speed/Acc
+# --------------------------
+V_FAST = 70
+A_FAST = 70
+V_SLOW = 30
+A_SLOW = 30
+
+# For correction moves
+V_ALIGN = 50
+A_ALIGN = 50
+
+# --------------------------
+# Poses (mm, deg)
+# --------------------------
+HOME_P = posx(367.22, 3.83, 201.28, 158.41, 179.96, 158.79)
+
+S1_BASE = (750.39,  200.46, 250.92,   2.36,   88.13,   2.04)
+S2_BASE = (429.80, -258.59,  86.78, 115.36, -179.93, 116.26)
+S3_BASE = (429.06,  213.83,  87.04, 154.82,  179.97, 155.23)
+
+S1_AXIS = 'z'
+S2_AXIS = 'x'
+S3_AXIS = 'x'
+
+# ✅ 너가 새로 준 “하드코딩 접근 포즈”(필요하면 수정/비활성화 가능)
+S2_ALIGN_ABS = posx(426.10, 13.48, 144.04, 173.681, -179.048, 174.517)
+
+# ✅ 너가 새로 준 성공/분류 기준(그대로 반영)
+Z_SUCCESS_NEW = 75.670
+Z_CHECK_NEW   = 35.617
+FX_SUCCESS_TH = 3.0
+FZ_RETRY_TH   = 5.0
+XY_STEP_NEW   = 5.0
+
+# ============================================================
+# Gripper
+# ============================================================
+def open_gripper():
+    set_digital_output(2, ON)
+    wait(1.00)
+    set_digital_output(2, OFF)
+
+def close_gripper():
+    set_digital_output(1, ON)
+    wait(1.00)
+    set_digital_output(1, OFF)
+
+
+# ============================================================
+# Relative Z helpers
+# ============================================================
+def z_up():
+    movel(posx(0, 0, 10, 0, 0, 0), v=V_ALIGN, a=A_ALIGN, mod=DR_MV_MOD_REL)
+
+def z_down():
+    movel(posx(0, 0, -12, 0, 0, 0), v=V_ALIGN, a=A_ALIGN, mod=DR_MV_MOD_REL)
+
+
+# ============================================================
+# Slot pose utilities
+# ============================================================
+def slot_pose(base, i, axis):
+    x0, y0, z0, A0, B0, C0 = base
+    x, y, z = x0, y0, z0
+    if axis == 'x':
+        x = x0 + i * DX
+    elif axis == 'y':
+        y = y0 + i * DY
+    elif axis == 'z':
+        z = z0 + i * DZ
+    return posx(x, y, z, A0, B0, C0)
+
+def app_pose_zup(base, i, axis):
+    p = slot_pose(base, i, axis)
+    return posx(p[0], p[1], p[2] + Z_UP, p[3], p[4], p[5])
+
+def app_pose_xpull(base, i, axis, x_pull):
+    p = slot_pose(base, i, axis)
+    return posx(p[0] + x_pull, p[1], p[2], p[3], p[4], p[5])
+
+
+# ============================================================
+# Basic moves
+# ============================================================
+def go_home():
+    movel(HOME_P, v=V_FAST, a=A_FAST)
+
+def go_slot_zup(base, i, axis):
+    p_app  = app_pose_zup(base, i, axis)
+    p_work = slot_pose(base, i, axis)
+    movel(p_app,  v=V_FAST, a=A_FAST)
+    movel(p_work, v=V_SLOW, a=A_SLOW)
+
+def leave_slot_zup(base, i, axis):
+    p_app = app_pose_zup(base, i, axis)
+    movel(p_app, v=V_FAST, a=A_FAST)
+
+def go_slot_xpull(base, i, axis, x_pull):
+    p_app  = app_pose_xpull(base, i, axis, x_pull)
+    p_work = slot_pose(base, i, axis)
+    movel(p_app,  v=V_FAST, a=A_FAST)
+    movel(p_work, v=V_SLOW, a=A_SLOW)
+
+def leave_slot_xpull(base, i, axis, x_pull):
+    p_app = app_pose_xpull(base, i, axis, x_pull)
+    movel(p_app, v=V_FAST, a=A_FAST)
+
+
+# ============================================================
+# Shelf1 pick / Shelf3 place
+# ============================================================
+def pick_from_shelf1(base, i, axis, x_pull):
+    open_gripper()
+    wait(0.2)
+
+    go_slot_xpull(base, i, axis, x_pull)
+
+    close_gripper()
+    wait(0.3)
+
+    leave_slot_xpull(base, i, axis, x_pull)
+
+def place_to_shelf3(base, i, axis):
+    go_slot_zup(base, i, axis)
+
+    open_gripper()
+    wait(0.3)
+
+    leave_slot_zup(base, i, axis)
+
+
+# ============================================================
+# ✅ Shelf2 align/insert algorithm (your latest code, packaged)
+# ============================================================
+def shelf2_force_align():
+    # 힘 제어 모드 활성화
+    task_compliance_ctrl()
+    set_stiffnessx([1000.0, 1000.0, 1000.0, 100.0, 100.0, 100.0], time=0.0)
+    set_desired_force([0.0, 0.0, -20.0, 0.0, 0.0, 0.0],
+                      [0, 0, 1, 0, 0, 0],
+                      time=0.0, mod=DR_FC_MOD_ABS)
+    wait(0.3)
+
+    # 구분 알고리즘
+    while True:
+        pose, sol = get_current_posx(DR_BASE)
+        x, y, z, rx, ry, rz = pose
+        fx, fy, fz, tx, ty, tz = get_tool_force()
+
+        # ✅ 성공판별 기준(네 코드 그대로)
+        if z <= Z_SUCCESS_NEW and fx >= FX_SUCCESS_TH:
+            break
+
+        # ✅ 보정 조건(네 코드 그대로)
+        if fz >= FZ_RETRY_TH and z > Z_CHECK_NEW:
+            dx = 0.0
+            dy = 0.0
+
+            if tx > 0: dx = +XY_STEP_NEW
+            elif tx < 0: dx = -XY_STEP_NEW
+
+            if ty > 0: dy = +XY_STEP_NEW
+            elif ty < 0: dy = -XY_STEP_NEW
+
+            # 힘 제어 해제
+            release_force(time=0.0)
+            release_compliance_ctrl()
+
+            # 이동
+            z_up()
+            movel(posx(dx, dy, 0, 0, 0, 0), v=V_ALIGN, a=A_ALIGN, mod=DR_MV_MOD_REL)
+            z_down()
+
+            # 다시 force 켜서 계속 하강 유도
+            task_compliance_ctrl()
+            set_stiffnessx([1000.0, 1000.0, 1000.0, 100.0, 100.0, 100.0], time=0.0)
+            set_desired_force([0.0, 0.0, -20.0, 0.0, 0.0, 0.0],
+                              [0, 0, 1, 0, 0, 0],
+                              time=0.0, mod=DR_FC_MOD_ABS)
+            wait(0.3)
+
+        wait(0.05)
+
+    # 끝날 때 힘 제어 해제(안전)
+    release_force(time=0.0)
+    release_compliance_ctrl()
+
+    # 그리퍼 열기 + 상승(네 코드 흐름 유지)
+    open_gripper()
+    z_up()
+
+
+def align_and_inspect_at_shelf2(base, i, axis):
+    # 1) Shelf2 slot로 접근/작업점 이동
+    go_slot_zup(base, i, axis)
+
+    # 2) (옵션) 너가 준 하드코딩 포즈로 이동 후 정렬 시작
+    #    필요 없으면 아래 2줄을 주석 처리해도 됨.
+    movel(S2_ALIGN_ABS, v=V_ALIGN, a=A_ALIGN, mod=DR_MV_MOD_ABS)
+
+    # 3) 힘제어 정렬 알고리즘 실행
+    shelf2_force_align()
+
+    # 4) 검사 대기 + 이탈
+    wait(INSPECT_TIME)
+    leave_slot_zup(base, i, axis)
+
+
+def do_homing():
+    pass
+
+
+# ============================================================
+# Main
+# ============================================================
+def main():
+    s1_idx = 0
+    s2_idx = 0
+    s3_idx = 0
+
+    go_home()
+
+    # 1) Pick from Shelf1
+    pick_from_shelf1(S1_BASE, s1_idx, S1_AXIS, X_PULL)
+    go_home()
+
+    # 2) Align + Inspect at Shelf2
+    align_and_inspect_at_shelf2(S2_BASE, s2_idx, S2_AXIS)
+
+    # 3) Place to Shelf3
+    place_to_shelf3(S3_BASE, s3_idx, S3_AXIS)
+    go_home()
+
+    do_homing()
+    go_home()
+
+main()
