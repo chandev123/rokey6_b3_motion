@@ -1,10 +1,8 @@
 # ============================
 # Stage A: Shelf1<->Shelf2 : movej 연속 3번 왕복 (HOME 반복 방문 X)
-# Stage B: Shelf2->Shelf3 : movel
-#   - Shelf2: 3점(i=0,1,2)에서 집기 (x + 60*i)
-#   - Shelf3: 1점 고정
-#     * 접근/내려감은 S3_BASE 자세 그대로
-#     * 내려놓기 직전에만 "S3_BASE 기준으로" pitch(=B)만 조금 덧붙여 기울임
+# Stage B: Shelf2->Shelf3 :
+#   - Shelf2 픽은 "티칭된 q_s2[0..2]"로만 접근 (계산 posx 제거 = workspace 근본 해결)
+#   - Shelf3는 posx 1점 고정 + solution1(접근 base 자세, 놓을 때만 tilt)
 # ============================
 
 Z_UP = 100.0
@@ -20,20 +18,16 @@ AJ = 70
 
 HOME_P = posx(367.22, 3.83, 201.28, 158.41, 179.96, 158.79)
 
-S2_BASE = (429.80, -258.59, 185.82, 115.72, -179.93, 116.62)  # Shelf2 slot0 (posx)
-S3_BASE = (429.06,  213.83,  87.06, 152.93,  179.97, 155.34)  # Shelf3 fixed point (posx)
-
-S2_STEP_X = 60.0
+S3_BASE = (429.06,  213.83,  87.06, 152.93,  179.97, 155.34)  # Shelf3 fixed (posx)
 
 # Shelf1 micro motion (Stage A)
 S1_PICK_PUSH_X = 20.0
 S1_PICK_PULL_X = -10.0
 S1_BEFORE_CLOSE_WAIT = 0.5
 
-# ✅ Shelf3 tilt: "기존 자세 기준으로" B만 변경
-# 30~40도 느낌을 내고 싶으면, 처음엔 작게 시작해서 올려.
-S3_PITCH_DELTA_DEG = 25.0   # 추천 시작: 10~25 (workspace 안전) -> 되면 30~40까지 올리기
-S3_PITCH_SIGN = -1.0        # 방향 반대면 +1/-1 바꾸기
+# Shelf3 tilt: "기존 자세 기준으로" B만 덧붙임 (workspace 안전)
+S3_PITCH_DELTA_DEG = 20.0   # <- 먼저 10~20으로 안정화 후 30~40으로 올려
+S3_PITCH_SIGN = -1.0        # 방향 반대면 +1 / -1만 바꾸기
 
 
 def do_homing():
@@ -103,11 +97,7 @@ def move_rel_x(dx, v=V_SLOW, a=A_SLOW):
     movel(posx(x + dx, y, z, A, B, C), v=v, a=a)
 
 
-# -------------------------
-# Angle normalize to [-180, 180]
-# -------------------------
 def _wrap_deg(a):
-    # DRL에서 % 연산이 안 되는 환경이면 while로도 잘 돈다
     while a > 180.0:
         a = a - 360.0
     while a < -180.0:
@@ -116,19 +106,7 @@ def _wrap_deg(a):
 
 
 # -------------------------
-# Stage B: Shelf2 (3 points) pose helpers
-# -------------------------
-def s2_work_pose(i):
-    x0, y0, z0, A0, B0, C0 = S2_BASE
-    return posx(x0 + i * S2_STEP_X, y0, z0, A0, B0, C0)
-
-def s2_app_pose(i):
-    x0, y0, z0, A0, B0, C0 = S2_BASE
-    return posx(x0 + i * S2_STEP_X, y0, z0 + Z_UP, A0, B0, C0)
-
-
-# -------------------------
-# Shelf3: base pose helpers (기존 자세)
+# Shelf3 pose helpers (base + tilt-from-base)
 # -------------------------
 def s3_app_pose_base():
     x0, y0, z0, A0, B0, C0 = S3_BASE
@@ -138,42 +116,10 @@ def s3_work_pose_base():
     x0, y0, z0, A0, B0, C0 = S3_BASE
     return posx(x0, y0, z0, A0, B0, C0)
 
-# ✅ Shelf3: tilt pose = 기존 자세에서 B만 delta (절대 A=0,B=-55,C=0 같은 강제 금지)
 def s3_work_pose_tilt_from_base():
     x0, y0, z0, A0, B0, C0 = S3_BASE
     B = _wrap_deg(B0 + S3_PITCH_SIGN * S3_PITCH_DELTA_DEG)
     return posx(x0, y0, z0, A0, B, C0)
-
-
-def movel_pick_s2(i):
-    movel(s2_app_pose(i),  v=V_FAST, a=A_FAST)
-    movel(s2_work_pose(i), v=V_SLOW, a=A_SLOW)
-    wait(0.2)
-
-    close_gripper()
-    wait(0.2)
-
-    movel(s2_app_pose(i),  v=V_FAST, a=A_FAST)
-    wait(0.1)
-
-
-def movel_place_s3_fixed_tilt_solution1():
-    # 해결책1: 접근/내려감은 base 자세(도달 가능)로
-    movel(s3_app_pose_base(),  v=V_FAST, a=A_FAST)
-    movel(s3_work_pose_base(), v=V_SLOW, a=A_SLOW)
-    wait(0.1)
-
-    # 같은 XYZ에서 "기존 자세 근처"로만 기울임 (IK 성공률↑)
-    movel(s3_work_pose_tilt_from_base(), v=V_SLOW, a=A_SLOW)
-    wait(0.1)
-
-    open_gripper()
-    wait(0.2)
-
-    # 다시 base로 복귀 후 이탈
-    movel(s3_work_pose_base(), v=V_SLOW, a=A_SLOW)
-    movel(s3_app_pose_base(),  v=V_FAST, a=A_FAST)
-    wait(0.1)
 
 
 # ============================================================
@@ -207,17 +153,46 @@ def stageA_s1_s2_roundtrip_3cycles_no_home():
 
 
 # ============================================================
-# Stage B: Shelf2(i=0,1,2)에서 집고 -> Shelf3 고정점(기울임)으로 놓기
+# Stage B (진짜 해결 버전):
+#   - Shelf2 픽: 계산 posx(=S2_BASE+i*60) 완전 제거
+#              티칭된 q_s2[i]로만 접근 -> close
+#   - Shelf3 플레이스: posx 1점 고정 + solution1(접근 base, work에서만 tilt)
 # ============================================================
-def stageB_s2_s3_s2_3points_s3_fixed_solution1_3cycles():
+def stageB_s2_s3_pick_qs2_place_s3fixed_tilt_3cycles():
     for i in range(3):
-        movel_pick_s2(i)
-        movel_place_s3_fixed_tilt_solution1()
+        # --- Shelf2(i)에서 집기: movej로 확실히 도달 가능한 점만 사용 ---
+        goj(q_s2[i])
+        wait(0.2)
+
+        close_gripper()
+        wait(0.2)
+
+        # --- (옵션) 안전 이탈: Home을 경유하면 직선보다 느리지만 workspace 최강 안정 ---
+        # 필요 없으면 주석 처리 가능
+        go_home()
+        wait(0.1)
+
+        # --- Shelf3: 접근/내려감은 base 자세로 ---
+        movel(s3_app_pose_base(),  v=V_FAST, a=A_FAST)
+        movel(s3_work_pose_base(), v=V_SLOW, a=A_SLOW)
+        wait(0.1)
+
+        # --- 같은 점에서만 tilt 자세로 잠깐 변경 후 놓기 ---
+        movel(s3_work_pose_tilt_from_base(), v=V_SLOW, a=A_SLOW)
+        wait(0.1)
+
+        open_gripper()
+        wait(0.2)
+
+        # --- base로 복귀 후 이탈 ---
+        movel(s3_work_pose_base(), v=V_SLOW, a=A_SLOW)
+        movel(s3_app_pose_base(),  v=V_FAST, a=A_FAST)
+        wait(0.1)
 
 
 def main():
     stageA_s1_s2_roundtrip_3cycles_no_home()
-    stageB_s2_s3_s2_3points_s3_fixed_solution1_3cycles()
+    stageB_s2_s3_pick_qs2_place_s3fixed_tilt_3cycles()
 
     do_homing()
     go_home()
