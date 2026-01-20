@@ -1,8 +1,12 @@
 # ============================
-# Stage A: Shelf1<->Shelf2 : movej로 3번 왕복 (q_s1/q_s2 사용)
+# Stage A: Shelf1<->Shelf2 : movej로 3번 왕복 (HOME 출발)
+#   - HOME에서 출발할 때 그리퍼 OPEN
+#   - Shelf1 도착 후: X +20 -> wait 0.5 -> CLOSE -> X -10 -> Shelf2 이동
+#   - Shelf2에서 검사 후 OPEN (놓기)
+#
 # Stage B: Shelf2->Shelf3 : movel로 3번 직선 운반
-#   - Shelf2: x + 60*i
-#   - Shelf3: x - 60*i
+#   - Shelf2: 반복(i)마다 x + 60
+#   - Shelf3: 반복(i)마다 x - 60
 # ============================
 
 Z_UP = 100.0
@@ -20,11 +24,16 @@ AJ = 70
 HOME_P = posx(367.22, 3.83, 201.28, 158.41, 179.96, 158.79)
 
 S2_BASE = (429.80, -258.59, 185.82, 115.72, -179.93, 116.62)  # Shelf2 slot0 (posx)
-S3_BASE = (429.06,  213.83,  87.06, 152.93,  179.97, 155.34)  # Shelf3 slot0 (posx)
+S3_BASE = (250.06,  213.83,  87.06, 152.93,  179.97, 155.34)  # Shelf3 slot0 (posx)
 
 # Stage B step
 S2_STEP_X = 60.0
 S3_STEP_X = -60.0
+
+# Shelf1 pick micro motion (Stage A)
+S1_PICK_PUSH_X = 20.0     # Shelf1 도착 후 +20
+S1_PICK_PULL_X = -20.0    # 잡은 후 -10
+S1_BEFORE_CLOSE_WAIT = 0.5
 
 
 def do_homing():
@@ -59,11 +68,23 @@ q_s2 = [
     [-25.60, 37.51, 39.08, 0.17, 103.36, -24.97],    # Shelf2 idx2 (place/inspect)
 ]
 
+
 def goj(q):
     movej(q, v=VJ, a=AJ)
 
 def go_home():
     movel(HOME_P, v=V_FAST, a=A_FAST)
+
+
+# -------------------------
+# Relative X move helper (TCP 기준)
+# -------------------------
+def move_rel_x(dx, v=V_SLOW, a=A_SLOW):
+    # 현재 TCP pose 읽어서 x만 dx 만큼 이동
+    # ※ 너 환경에서 get_current_posx() 함수명이 다르면 여기만 바꿔주면 됨
+    p = get_current_posx()
+    x, y, z, A, B, C = p[0], p[1], p[2], p[3], p[4], p[5]
+    movel(posx(x + dx, y, z, A, B, C), v=v, a=a)
 
 
 # -------------------------
@@ -87,7 +108,6 @@ def s3_app_pose(i):
 
 
 def movel_pick_s2(i):
-    # approach -> work -> grip close -> leave
     movel(s2_app_pose(i),  v=V_FAST, a=A_FAST)
     movel(s2_work_pose(i), v=V_SLOW, a=A_SLOW)
     wait(0.2)
@@ -100,7 +120,6 @@ def movel_pick_s2(i):
 
 
 def movel_place_s3(i):
-    # approach -> work -> grip open -> leave
     movel(s3_app_pose(i),  v=V_FAST, a=A_FAST)
     movel(s3_work_pose(i), v=V_SLOW, a=A_SLOW)
     wait(0.2)
@@ -113,33 +132,52 @@ def movel_place_s3(i):
 
 
 # ============================================================
-# Stage A: Shelf1 -> Shelf2 (movej 왕복) x3
+# Stage A: HOME -> Shelf1 pick(미세이동 포함) -> Shelf2 inspect/place -> 다시 Shelf1
 # ============================================================
-def stageA_s1_s2_movej_3cycles():
+def stageA_s1_s2_roundtrip_3cycles():
     for i in range(3):
-        # Shelf1(i) pick
+        # HOME에서 출발
+        go_home()
+        wait(0.2)
+
+        # Shelf1 가기 전: 그리퍼 열기
+        open_gripper()
+        wait(0.1)
+
+        # Shelf1(i)로 이동
         goj(q_s1[i])
         wait(0.2)
 
-        open_gripper()
-        wait(0.2)
+        # ✅ Shelf1에서 X +20 전진
+        move_rel_x(S1_PICK_PUSH_X, v=V_SLOW, a=A_SLOW)
+
+        # ✅ 닫기 전 0.5초 대기
+        wait(S1_BEFORE_CLOSE_WAIT)
+
+        # ✅ 집기(닫기)
         close_gripper()
         wait(0.2)
 
-        # Shelf2(i) place + inspect
-        goj(q_s2[i])
-        wait(0.2)
+        # ✅ 잡은 후 X -10 짧게 후퇴
+        move_rel_x(S1_PICK_PULL_X, v=V_SLOW, a=A_SLOW)
+        wait(0.1)
 
-        open_gripper()
+        # Shelf2(i)로 이동 -> 검사 -> 내려놓기
+        goj(q_s2[i])
         wait(0.2)
 
         wait(INSPECT_TIME)
 
+        open_gripper()
+        wait(0.2)
+
+        # 다시 Shelf1로 (다음 cycle 준비)
+        goj(q_s1[i])
+        wait(0.2)
+
 
 # ============================================================
 # Stage B: Shelf2 -> Shelf3 (movel) x3
-#   Shelf2: x + 60*i
-#   Shelf3: x - 60*i
 # ============================================================
 def stageB_s2_s3_movel_3cycles():
     for i in range(3):
@@ -151,7 +189,7 @@ def main():
     go_home()
     wait(0.5)
 
-    stageA_s1_s2_movej_3cycles()
+    stageA_s1_s2_roundtrip_3cycles()
     stageB_s2_s3_movel_3cycles()
 
     do_homing()
