@@ -1,140 +1,32 @@
-# ============================
-# Stage A: Shelf1<->Shelf2 : movej로 3번 연속 왕복 (HOME 반복 방문 X)
-#   - Shelf1 도착 후: X +20 -> wait 0.5 -> CLOSE -> X -10 -> Shelf2 이동
-#   - Shelf2에서 검사 후 OPEN(놓기)
-#
-# Stage B: Shelf2->Shelf3 : movel
-#   - Shelf2: 3점 (i=0,1,2)에서 집기 (x + 60*i)
-#   - Shelf3: 1점 고정 + "앞으로 숙이는(tilt)" 자세로 놓기
-# ============================
-
-Z_UP = 100.0
-INSPECT_TIME = 2.0
-
-V_FAST = 70
-A_FAST = 70
-V_SLOW = 20
-A_SLOW = 20
-
-VJ = 70
-AJ = 70
-
-HOME_P = posx(367.22, 3.83, 201.28, 158.41, 179.96, 158.79)
-
-S2_BASE = (429.80, -258.59, 185.82, 115.72, -179.93, 116.62)  # Shelf2 slot0 (posx)
-S3_BASE = (429.06,  213.83,  87.06, 152.93,  179.97, 155.34)  # Shelf3 fixed place (posx)
-
-# Stage B: Shelf2 step
-S2_STEP_X = 60.0
-
-# Shelf1 micro motion (Stage A)
-S1_PICK_PUSH_X = 20.0
-S1_PICK_PULL_X = -10.0
-S1_BEFORE_CLOSE_WAIT = 0.5
-
-# Shelf3 tilt (forward pitch-like)
-S3_TILT_DEG = 35.0   # 30~45 사이로 조절 (앞으로 숙이기)
-
-
-def do_homing():
-    pass
-
-
 # -------------------------
-# Gripper
+# Shelf3 orientation constraint
+#  - Tool direction in XZ plane (perpendicular to Y axis)
+#  - Angle to XY plane: 30~40 deg
 # -------------------------
-def open_gripper():
-    set_digital_output(2, ON)
-    wait(1.00)
-    set_digital_output(2, OFF)
+S3_TILT_TO_XY_DEG = 35.0  # 30~40 사이로 조절
+S3_TILT_SIGN = +1.0       # +1: +X쪽으로 기울임 / -1: -X쪽으로 기울임
 
-def close_gripper():
-    set_digital_output(1, ON)
-    wait(1.00)
-    set_digital_output(1, OFF)
-
-
-# -------------------------
-# MOVEJ targets (티칭값)
-# -------------------------
-q_s1 = [
-    [30.62, 18.12, 122.74, -146.41, 57.81, 161.67],
-    [40.95, 24.14, 113.02, -133.93, 59.29, 152.80],
-    [49.59, 30.45, 102.15, -123.56, 61.19, 144.29],
-]
-q_s2 = [
-    [-31.45, 19.05, 69.88, 0.07, 91.00, -30.92],
-    [-28.24, 27.55, 54.35, 0.11, 98.04, -27.66],
-    [-25.60, 37.51, 39.08, 0.17, 103.36, -24.97],
-]
-
-def goj(q):
-    movej(q, v=VJ, a=AJ)
-
-def go_home():
-    movel(HOME_P, v=V_FAST, a=A_FAST)
-
-
-# -------------------------
-# Robust current posx extractor + rel move
-# -------------------------
-def _extract_posx6(p):
-    try:
-        if (len(p) >= 6):
-            return p[0], p[1], p[2], p[3], p[4], p[5]
-    except:
-        pass
-
-    try:
-        if (len(p) >= 1):
-            p0 = p[0]
-            if (len(p0) >= 6):
-                return p0[0], p0[1], p0[2], p0[3], p0[4], p0[5]
-    except:
-        pass
-
-    tp_popup("get_current_posx() format unexpected:\n" + str(p))
-    raise Exception("Cannot extract 6D pose from get_current_posx()")
-
-
-def move_rel_x(dx, v=V_SLOW, a=A_SLOW):
-    p = get_current_posx()
-    x, y, z, A, B, C = _extract_posx6(p)
-    movel(posx(x + dx, y, z, A, B, C), v=v, a=a)
-
-
-# -------------------------
-# Stage B: Shelf2 (3 points) pose helpers + Shelf3 (fixed tilt) pose helpers
-# -------------------------
-def s2_work_pose(i):
-    x0, y0, z0, A0, B0, C0 = S2_BASE
-    return posx(x0 + i * S2_STEP_X, y0, z0, A0, B0, C0)
-
-def s2_app_pose(i):
-    x0, y0, z0, A0, B0, C0 = S2_BASE
-    return posx(x0 + i * S2_STEP_X, y0, z0 + Z_UP, A0, B0, C0)
-
-# ✅ Shelf3: 앞으로 숙이기(tilt) = B에 +S3_TILT_DEG 적용
 def s3_fixed_work_pose_tilt():
     x0, y0, z0, A0, B0, C0 = S3_BASE
-    return posx(x0, y0, z0, A0, B0 + S3_TILT_DEG, C0)
+
+    # XY평면과 각 = S3_TILT_TO_XY_DEG 가 되도록 피치 크기 설정
+    # (툴 Z축이 XZ평면에 있고, 수평면과 theta 각이 되게 만들기)
+    B_mag = 90.0 - S3_TILT_TO_XY_DEG   # 예: 35 -> 55
+    A = 0.0
+    B = S3_TILT_SIGN * B_mag
+    C = 0.0
+
+    return posx(x0, y0, z0, A, B, C)
 
 def s3_fixed_app_pose_tilt():
     x0, y0, z0, A0, B0, C0 = S3_BASE
-    return posx(x0, y0, z0 + Z_UP, A0, B0 + S3_TILT_DEG, C0)
 
+    B_mag = 90.0 - S3_TILT_TO_XY_DEG
+    A = 0.0
+    B = S3_TILT_SIGN * B_mag
+    C = 0.0
 
-def movel_pick_s2(i):
-    movel(s2_app_pose(i),  v=V_FAST, a=A_FAST)
-    movel(s2_work_pose(i), v=V_SLOW, a=A_SLOW)
-    wait(0.2)
-
-    close_gripper()
-    wait(0.2)
-
-    movel(s2_app_pose(i),  v=V_FAST, a=A_FAST)
-    wait(0.1)
-
+    return posx(x0, y0, z0 + Z_UP, A, B, C)
 
 def movel_place_s3_fixed_tilt():
     movel(s3_fixed_app_pose_tilt(),  v=V_FAST, a=A_FAST)
@@ -146,59 +38,3 @@ def movel_place_s3_fixed_tilt():
 
     movel(s3_fixed_app_pose_tilt(),  v=V_FAST, a=A_FAST)
     wait(0.1)
-
-
-# ============================================================
-# Stage A: Shelf1<->Shelf2 (HOME 반복 방문 없이) 3번 연속 왕복
-# ============================================================
-def stageA_s1_s2_roundtrip_3cycles_no_home():
-    # 시작: HOME에서 1번만 출발
-    go_home()
-    wait(0.3)
-
-    for i in range(3):
-        # Shelf1 가기 전: 그리퍼 열기
-        open_gripper()
-        wait(0.1)
-
-        # Shelf1(i) 이동
-        goj(q_s1[i])
-        wait(0.2)
-
-        # Shelf1에서 전진 + 대기 + 집기 + 후퇴
-        move_rel_x(S1_PICK_PUSH_X, v=V_SLOW, a=A_SLOW)
-        wait(S1_BEFORE_CLOSE_WAIT)
-        close_gripper()
-        wait(0.2)
-        move_rel_x(S1_PICK_PULL_X, v=V_SLOW, a=A_SLOW)
-        wait(0.1)
-
-        # Shelf2(i) 이동 -> 검사 -> 내려놓기
-        goj(q_s2[i])
-        wait(0.2)
-
-        wait(INSPECT_TIME)
-
-        open_gripper()
-        wait(0.2)
-
-        # HOME 없이 다음 i로 진행
-
-
-# ============================================================
-# Stage B: Shelf2(i=0,1,2)에서 집고 -> Shelf3 "고정 1점 + 앞으로 숙여서" 놓기
-# ============================================================
-def stageB_s2_s3_s2_3points_s3_fixed_tilt_3cycles():
-    for i in range(3):
-        movel_pick_s2(i)               # Shelf2는 3점
-        movel_place_s3_fixed_tilt()    # Shelf3는 1점(tilt)
-
-
-def main():
-    stageA_s1_s2_roundtrip_3cycles_no_home()
-    stageB_s2_s3_s2_3points_s3_fixed_tilt_3cycles()
-
-    do_homing()
-    go_home()
-
-main()
