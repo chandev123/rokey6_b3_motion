@@ -1,0 +1,10 @@
+# Goal
+string command      # e.g., 'pick', 'place', 'approach'
+float64[] target_pose # (Optional) target pose [x, y, z, r, p, y]
+---
+# Result
+bool success
+string message
+---
+# Feedback
+string current_step
