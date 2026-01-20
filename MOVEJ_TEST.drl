@@ -1,10 +1,19 @@
-# ============================
-# Stage A: Shelf1<->Shelf2 : movej 연속 3번 왕복 (HOME 반복 방문 X)
-# Stage B: Shelf2->Shelf3 :
-#   - Shelf2 픽: q_s2[i] (티칭된 관절값)로만 접근/집기
-#   - 중간 경유: q_mid (안정 자세, Shelf3와 같은 점으로 사용)
-#   - Shelf3: 고정 posx 1점 + solution1(접근 base, work에서만 tilt)
-# ============================
+# ============================================================
+# ✅ 완성본 전체 코드
+#
+# Stage A: Shelf1 <-> Shelf2 3회 왕복 (movej, HOME 반복 방문 X)
+#   - HOME에서 시작 1번만
+#   - 매 cycle:
+#       (1) Shelf1(i) 이동
+#       (2) X +20 전진 -> 0.5s 대기 -> 그리퍼 닫기 -> X -10 후퇴
+#       (3) Shelf2(i) 이동 -> INSPECT_TIME 대기 -> 그리퍼 열어 내려놓기
+#
+# Stage B: Shelf2 -> Shelf3 3회 운반
+#   - Shelf2 픽: movej(q_s2[i])  (확실히 도달 가능한 티칭값)
+#   - Shelf3 플레이스: movej(q_mid)로 "항상 동일한 팔 모양" 도착
+#       그 자리에서만 local movel (Z_UP 위/아래 + tilt)
+#   - 이 방식은 IK branch 튐을 최소화해서 workspace 오류를 크게 줄임
+# ============================================================
 
 Z_UP = 100.0
 INSPECT_TIME = 2.0
@@ -19,18 +28,19 @@ AJ = 70
 
 HOME_P = posx(367.22, 3.83, 201.28, 158.41, 179.96, 158.79)
 
-S3_BASE = (429.06,  213.83,  87.06, 152.93,  179.97, 155.34)  # Shelf3 fixed (posx)
+# Shelf3 fixed point (참고용: q_mid와 같은 지점에서 측정한 값)
+S3_BASE = (429.06, 213.83, 87.06, 152.93, 179.97, 155.34)
 
-# ✅ 사용자 제공 중간 경유 관절 자세 (Shelf3와 같은 안전점)
+# ✅ 사용자 제공 중간(=Shelf3 안정) 관절 자세
 q_mid = [26.01, 17.70, 87.27, 0.13, 75.06, 26.03]
 
-# Shelf1 micro motion (Stage A)
+# Stage A Shelf1 micro motion
 S1_PICK_PUSH_X = 20.0
 S1_PICK_PULL_X = -10.0
 S1_BEFORE_CLOSE_WAIT = 0.5
 
-# Shelf3 tilt: base 자세에서 B만 덧붙여 기울이기
-S3_PITCH_DELTA_DEG = 20.0   # 안정화 후 30~40으로 천천히 올리기
+# Stage B Shelf3 tilt (현재 q_mid 자세 기준 B에 덧붙이는 방식)
+S3_PITCH_DELTA_DEG = 20.0   # 처음 10~20 추천, 안정되면 30~40로 올리기
 S3_PITCH_SIGN = -1.0        # 방향 반대면 +1/-1 바꾸기
 
 
@@ -74,132 +84,9 @@ def go_home():
 
 
 # -------------------------
-# Robust current posx extractor + rel move (Stage A용)
+# Robust current posx extractor
 # -------------------------
 def _extract_posx6(p):
+    # case1: [x,y,z,a,b,c]
     try:
-        if (len(p) >= 6):
-            return p[0], p[1], p[2], p[3], p[4], p[5]
-    except:
-        pass
-
-    try:
-        if (len(p) >= 1):
-            p0 = p[0]
-            if (len(p0) >= 6):
-                return p0[0], p0[1], p0[2], p0[3], p0[4], p0[5]
-    except:
-        pass
-
-    tp_popup("get_current_posx() format unexpected:\n" + str(p))
-    raise Exception("Cannot extract 6D pose from get_current_posx()")
-
-
-def move_rel_x(dx, v=V_SLOW, a=A_SLOW):
-    p = get_current_posx()
-    x, y, z, A, B, C = _extract_posx6(p)
-    movel(posx(x + dx, y, z, A, B, C), v=v, a=a)
-
-
-def _wrap_deg(a):
-    while a > 180.0:
-        a = a - 360.0
-    while a < -180.0:
-        a = a + 360.0
-    return a
-
-
-# -------------------------
-# Shelf3 pose helpers (base + tilt-from-base)
-# -------------------------
-def s3_app_pose_base():
-    x0, y0, z0, A0, B0, C0 = S3_BASE
-    return posx(x0, y0, z0 + Z_UP, A0, B0, C0)
-
-def s3_work_pose_base():
-    x0, y0, z0, A0, B0, C0 = S3_BASE
-    return posx(x0, y0, z0, A0, B0, C0)
-
-def s3_work_pose_tilt_from_base():
-    x0, y0, z0, A0, B0, C0 = S3_BASE
-    B = _wrap_deg(B0 + S3_PITCH_SIGN * S3_PITCH_DELTA_DEG)
-    return posx(x0, y0, z0, A0, B, C0)
-
-
-# ============================================================
-# Stage A: Shelf1<->Shelf2 (HOME 반복 방문 없이) 3번 연속 왕복
-# ============================================================
-def stageA_s1_s2_roundtrip_3cycles_no_home():
-    go_home()
-    wait(0.3)
-
-    for i in range(3):
-        open_gripper()
-        wait(0.1)
-
-        goj(q_s1[i])
-        wait(0.2)
-
-        move_rel_x(S1_PICK_PUSH_X, v=V_SLOW, a=A_SLOW)
-        wait(S1_BEFORE_CLOSE_WAIT)
-        close_gripper()
-        wait(0.2)
-        move_rel_x(S1_PICK_PULL_X, v=V_SLOW, a=A_SLOW)
-        wait(0.1)
-
-        goj(q_s2[i])
-        wait(0.2)
-
-        wait(INSPECT_TIME)
-
-        open_gripper()
-        wait(0.2)
-
-
-# ============================================================
-# Stage B:
-#   Shelf2(i)에서 movej로 집기 -> q_mid 경유 -> Shelf3 posx로 놓기(tilt) -> q_mid로 복귀
-# ============================================================
-def stageB_s2_s3_pick_qs2_via_qmid_place_s3fixed_tilt_3cycles():
-    for i in range(3):
-        # 1) Shelf2(i)로 이동 후 집기 (도달 가능한 q만 사용)
-        goj(q_s2[i])
-        wait(0.2)
-
-        close_gripper()
-        wait(0.2)
-
-        # 2) 안정 중간점(=Shelf3와 같은 점)으로 이동
-        goj(q_mid)
-        wait(0.1)
-
-        # 3) Shelf3: base 자세로 접근/내려감
-        movel(s3_app_pose_base(),  v=V_FAST, a=A_FAST)
-        movel(s3_work_pose_base(), v=V_SLOW, a=A_SLOW)
-        wait(0.1)
-
-        # 4) 같은 XYZ에서만 tilt 자세로 바꾸고 놓기
-        movel(s3_work_pose_tilt_from_base(), v=V_SLOW, a=A_SLOW)
-        wait(0.1)
-
-        open_gripper()
-        wait(0.2)
-
-        # 5) base 자세로 복귀 후 위로 이탈
-        movel(s3_work_pose_base(), v=V_SLOW, a=A_SLOW)
-        movel(s3_app_pose_base(),  v=V_FAST, a=A_FAST)
-        wait(0.1)
-
-        # 6) 다시 q_mid로 돌아가서 다음 cycle 준비 (안정성↑)
-        goj(q_mid)
-        wait(0.1)
-
-
-def main():
-    stageA_s1_s2_roundtrip_3cycles_no_home()
-    stageB_s2_s3_pick_qs2_via_qmid_place_s3fixed_tilt_3cycles()
-
-    do_homing()
-    go_home()
-
-main()
+        if len(p) >= 6:
