@@ -90,3 +90,147 @@ def _extract_posx6(p):
     # case1: [x,y,z,a,b,c]
     try:
         if len(p) >= 6:
+            return p[0], p[1], p[2], p[3], p[4], p[5]
+    except:
+        pass
+
+    # case2: ([x,y,z,a,b,c], sol)
+    try:
+        if len(p) >= 1:
+            p0 = p[0]
+            if len(p0) >= 6:
+                return p0[0], p0[1], p0[2], p0[3], p0[4], p0[5]
+    except:
+        pass
+
+    tp_popup("get_current_posx() format unexpected:\n" + str(p))
+    raise Exception("Cannot extract 6D pose from get_current_posx()")
+
+
+def _wrap_deg(a):
+    while a > 180.0:
+        a = a - 360.0
+    while a < -180.0:
+        a = a + 360.0
+    return a
+
+
+# -------------------------
+# Relative move X (Stage A pick micro)
+# -------------------------
+def move_rel_x(dx, v=V_SLOW, a=A_SLOW):
+    p = get_current_posx()
+    x, y, z, A, B, C = _extract_posx6(p)
+    movel(posx(x + dx, y, z, A, B, C), v=v, a=a)
+
+
+# -------------------------
+# Stage B local pose builders from current
+# -------------------------
+def _pose_from_current():
+    p = get_current_posx()
+    x, y, z, A, B, C = _extract_posx6(p)
+    return (x, y, z, A, B, C)
+
+def _pose_add_z(p6, dz):
+    x, y, z, A, B, C = p6
+    return posx(x, y, z + dz, A, B, C)
+
+def _pose_same(p6):
+    x, y, z, A, B, C = p6
+    return posx(x, y, z, A, B, C)
+
+def _pose_tilt_from_pose(p6, pitch_delta):
+    x, y, z, A, B, C = p6
+    B2 = _wrap_deg(B + pitch_delta)
+    return posx(x, y, z, A, B2, C)
+
+
+# ============================================================
+# Stage A: Shelf1<->Shelf2 (HOME 반복 방문 없이) 3번 연속 왕복
+# ============================================================
+def stageA_s1_s2_roundtrip_3cycles_no_home():
+    # 시작: HOME 1번만
+    go_home()
+    wait(0.3)
+
+    for i in range(3):
+        # 0) 집기 전 그리퍼 열기
+        open_gripper()
+        wait(0.1)
+
+        # 1) Shelf1(i) 이동
+        goj(q_s1[i])
+        wait(0.2)
+
+        # 2) +X 전진 -> 대기 -> 집기 -> -X 후퇴
+        move_rel_x(S1_PICK_PUSH_X, v=V_SLOW, a=A_SLOW)
+        wait(S1_BEFORE_CLOSE_WAIT)
+        close_gripper()
+        wait(0.2)
+        move_rel_x(S1_PICK_PULL_X, v=V_SLOW, a=A_SLOW)
+        wait(0.1)
+
+        # 3) Shelf2(i) 이동 -> 검사 -> 내려놓기
+        goj(q_s2[i])
+        wait(0.2)
+
+        wait(INSPECT_TIME)
+
+        open_gripper()
+        wait(0.2)
+
+
+# ============================================================
+# Stage B: Shelf2(i)에서 집기 -> q_mid로 이동 -> (local movel)로 Shelf3에 놓기
+#   - Shelf3는 q_mid에서 "현재 posx"를 읽어 local하게만 movel 수행 (동일성/안정성↑)
+# ============================================================
+def stageB_s2_s3_pick_qs2_via_qmid_place_local_3cycles():
+    for i in range(3):
+        # 1) Shelf2(i) 픽 (movej)
+        goj(q_s2[i])
+        wait(0.2)
+
+        close_gripper()
+        wait(0.2)
+
+        # 2) q_mid 경유 (항상 같은 팔 모양으로 Shelf3 영역 진입)
+        goj(q_mid)
+        wait(0.2)
+
+        # 3) q_mid 위치에서 현재 posx를 기준으로 local approach/work 생성
+        cur6 = _pose_from_current()
+        p_app  = _pose_add_z(cur6, Z_UP)
+        p_work = _pose_same(cur6)
+
+        # 4) 접근/하강 (local movel)
+        movel(p_app,  v=V_FAST, a=A_FAST)
+        movel(p_work, v=V_SLOW, a=A_SLOW)
+        wait(0.1)
+
+        # 5) 같은 점에서만 tilt 후 놓기
+        p_tilt = _pose_tilt_from_pose(cur6, S3_PITCH_SIGN * S3_PITCH_DELTA_DEG)
+        movel(p_tilt, v=V_SLOW, a=A_SLOW)
+        wait(0.1)
+
+        open_gripper()
+        wait(0.2)
+
+        # 6) 원래 자세로 복귀 후 위로
+        movel(p_work, v=V_SLOW, a=A_SLOW)
+        movel(p_app,  v=V_FAST, a=A_FAST)
+        wait(0.1)
+
+        # 7) 다음 cycle 안정 시작을 위해 다시 q_mid
+        goj(q_mid)
+        wait(0.1)
+
+
+def main():
+    stageA_s1_s2_roundtrip_3cycles_no_home()
+    stageB_s2_s3_pick_qs2_via_qmid_place_local_3cycles()
+
+    do_homing()
+    go_home()
+
+main()
