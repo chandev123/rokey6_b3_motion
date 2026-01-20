@@ -1,12 +1,12 @@
 # ============================
-# Stage A: Shelf1<->Shelf2 : movej로 3번 왕복 (HOME 출발)
-#   - HOME에서 출발할 때 그리퍼 OPEN
+# Stage A: Shelf1<->Shelf2 : movej로 3번 연속 왕복 (HOME 반복 방문 X)
 #   - Shelf1 도착 후: X +20 -> wait 0.5 -> CLOSE -> X -10 -> Shelf2 이동
-#   - Shelf2에서 검사 후 OPEN (놓기)
+#   - Shelf2에서 검사 후 OPEN(놓기) -> 바로 다음 Shelf1로
 #
-# Stage B: Shelf2->Shelf3 : movel로 3번 직선 운반
-#   - Shelf2: 반복(i)마다 x + 60
-#   - Shelf3: 반복(i)마다 x - 60
+# Stage B: Shelf2->Shelf3 : movel
+#   - Shelf2는 "하나의 고정 점"에서만 집기 (workspace 안정화)
+#   - Shelf3도 "하나의 고정 점"에만 계속 놓기
+#   - 위 작업을 3번 반복
 # ============================
 
 Z_UP = 100.0
@@ -17,22 +17,18 @@ A_FAST = 70
 V_SLOW = 20
 A_SLOW = 20
 
-# movej 속도/가속
 VJ = 70
 AJ = 70
 
 HOME_P = posx(367.22, 3.83, 201.28, 158.41, 179.96, 158.79)
 
-S2_BASE = (429.80, -258.59, 185.82, 115.72, -179.93, 116.62)  # Shelf2 slot0 (posx)
-S3_BASE = (429.06,  213.83,  87.06, 152.93,  179.97, 155.34)  # Shelf3 slot0 (posx)
+# 고정 posx 기반 픽/플레이스 점
+S2_BASE = (429.80, -258.59, 185.82, 115.72, -179.93, 116.62)  # Shelf2 fixed pick point
+S3_BASE = (429.06,  213.83,  87.06, 152.93,  179.97, 155.34)  # Shelf3 fixed place point
 
-# Stage B step
-S2_STEP_X = 60.0
-S3_STEP_X = -60.0
-
-# Shelf1 pick micro motion (Stage A)
-S1_PICK_PUSH_X = 20.0     # Shelf1 도착 후 +20
-S1_PICK_PULL_X = -10.0    # 잡은 후 -10
+# Shelf1 micro motion
+S1_PICK_PUSH_X = 20.0
+S1_PICK_PULL_X = -20.0
 S1_BEFORE_CLOSE_WAIT = 0.5
 
 
@@ -55,7 +51,7 @@ def close_gripper():
 
 
 # -------------------------
-# MOVEJ targets (이미 티칭한 값 사용)
+# MOVEJ targets (티칭값)
 # -------------------------
 q_s1 = [
     [30.62, 18.12, 122.74, -146.41, 57.81, 161.67],
@@ -68,7 +64,6 @@ q_s2 = [
     [-25.60, 37.51, 39.08, 0.17, 103.36, -24.97],
 ]
 
-
 def goj(q):
     movej(q, v=VJ, a=AJ)
 
@@ -77,17 +72,15 @@ def go_home():
 
 
 # -------------------------
-# ✅ Robust: 현재 TCP posx를 어떤 형태로 받아도 6개로 뽑기
+# Robust current posx extractor + rel move
 # -------------------------
 def _extract_posx6(p):
-    # 케이스1) p 자체가 [x,y,z,a,b,c] 형태
     try:
         if (len(p) >= 6):
             return p[0], p[1], p[2], p[3], p[4], p[5]
     except:
         pass
 
-    # 케이스2) p가 (posx6, something) 형태 → 첫 번째 요소를 다시 풀기
     try:
         if (len(p) >= 1):
             p0 = p[0]
@@ -96,73 +89,69 @@ def _extract_posx6(p):
     except:
         pass
 
-    # 여기까지 왔으면 형태가 다름 → 팝업으로 확인 후 중단
     tp_popup("get_current_posx() format unexpected:\n" + str(p))
-    # 안전하게 예외 발생(환경에 따라 raise 지원 안 하면 무한 루프/stop으로 대체 가능)
     raise Exception("Cannot extract 6D pose from get_current_posx()")
 
 
 def move_rel_x(dx, v=V_SLOW, a=A_SLOW):
-    """
-    현재 TCP 기준으로 X만 dx 만큼 직선 이동 (movel)
-    """
     p = get_current_posx()
     x, y, z, A, B, C = _extract_posx6(p)
     movel(posx(x + dx, y, z, A, B, C), v=v, a=a)
 
 
 # -------------------------
-# Stage B: MOVEL pose helpers
+# Stage B fixed-point MOVEL helpers
 # -------------------------
-def s2_work_pose(i):
+def s2_fixed_work_pose():
     x0, y0, z0, A0, B0, C0 = S2_BASE
-    return posx(x0 + i * S2_STEP_X, y0, z0, A0, B0, C0)
+    return posx(x0, y0, z0, A0, B0, C0)
 
-def s2_app_pose(i):
+def s2_fixed_app_pose():
     x0, y0, z0, A0, B0, C0 = S2_BASE
-    return posx(x0 + i * S2_STEP_X, y0, z0 + Z_UP, A0, B0, C0)
+    return posx(x0, y0, z0 + Z_UP, A0, B0, C0)
 
-def s3_work_pose(i):
+def s3_fixed_work_pose():
     x0, y0, z0, A0, B0, C0 = S3_BASE
-    return posx(x0 + i * S3_STEP_X, y0, z0, A0, B0, C0)
+    return posx(x0, y0, z0, A0, B0, C0)
 
-def s3_app_pose(i):
+def s3_fixed_app_pose():
     x0, y0, z0, A0, B0, C0 = S3_BASE
-    return posx(x0 + i * S3_STEP_X, y0, z0 + Z_UP, A0, B0, C0)
+    return posx(x0, y0, z0 + Z_UP, A0, B0, C0)
 
 
-def movel_pick_s2(i):
-    movel(s2_app_pose(i),  v=V_FAST, a=A_FAST)
-    movel(s2_work_pose(i), v=V_SLOW, a=A_SLOW)
+def movel_pick_s2_fixed():
+    movel(s2_fixed_app_pose(),  v=V_FAST, a=A_FAST)
+    movel(s2_fixed_work_pose(), v=V_SLOW, a=A_SLOW)
     wait(0.2)
 
     close_gripper()
     wait(0.2)
 
-    movel(s2_app_pose(i),  v=V_FAST, a=A_FAST)
+    movel(s2_fixed_app_pose(),  v=V_FAST, a=A_FAST)
     wait(0.1)
 
 
-def movel_place_s3(i):
-    movel(s3_app_pose(i),  v=V_FAST, a=A_FAST)
-    movel(s3_work_pose(i), v=V_SLOW, a=A_SLOW)
+def movel_place_s3_fixed():
+    movel(s3_fixed_app_pose(),  v=V_FAST, a=A_FAST)
+    movel(s3_fixed_work_pose(), v=V_SLOW, a=A_SLOW)
     wait(0.2)
 
     open_gripper()
     wait(0.2)
 
-    movel(s3_app_pose(i),  v=V_FAST, a=A_FAST)
+    movel(s3_fixed_app_pose(),  v=V_FAST, a=A_FAST)
     wait(0.1)
 
 
 # ============================================================
-# Stage A: HOME -> Shelf1 pick(미세이동 포함) -> Shelf2 inspect/place -> 다시 Shelf1
+# Stage A: Shelf1<->Shelf2 (HOME 반복 방문 없이) 3번 연속 왕복
 # ============================================================
-def stageA_s1_s2_roundtrip_3cycles():
-    for i in range(3):
-        go_home()
-        wait(0.2)
+def stageA_s1_s2_roundtrip_3cycles_no_home():
+    # 시작: HOME에서 1번만 출발
+    go_home()
+    wait(0.3)
 
+    for i in range(3):
         # Shelf1 가기 전: 그리퍼 열기
         open_gripper()
         wait(0.1)
@@ -171,17 +160,11 @@ def stageA_s1_s2_roundtrip_3cycles():
         goj(q_s1[i])
         wait(0.2)
 
-        # ✅ X +20 전진
+        # Shelf1에서 전진 + 대기 + 집기 + 후퇴
         move_rel_x(S1_PICK_PUSH_X, v=V_SLOW, a=A_SLOW)
-
-        # ✅ 닫기 전 0.5초 대기
         wait(S1_BEFORE_CLOSE_WAIT)
-
-        # ✅ 집기
         close_gripper()
         wait(0.2)
-
-        # ✅ 잡은 후 X -10 후퇴
         move_rel_x(S1_PICK_PULL_X, v=V_SLOW, a=A_SLOW)
         wait(0.1)
 
@@ -194,26 +177,25 @@ def stageA_s1_s2_roundtrip_3cycles():
         open_gripper()
         wait(0.2)
 
-        # 다시 Shelf1로 (다음 cycle 준비)
-        goj(q_s1[i])
-        wait(0.2)
+        # ❗HOME으로 안 가고 바로 다음 i의 Shelf1로 넘어감
+        # (for loop가 다음 i로 진행)
 
 
 # ============================================================
-# Stage B: Shelf2 -> Shelf3 (movel) x3
+# Stage B: Shelf2 fixed -> Shelf3 fixed 로만 3번 반복
 # ============================================================
-def stageB_s2_s3_movel_3cycles():
-    for i in range(3):
-        movel_pick_s2(i)
-        movel_place_s3(i)
+def stageB_s2_s3_fixedpoint_3cycles():
+    for _ in range(3):
+        movel_pick_s2_fixed()
+        movel_place_s3_fixed()
 
 
 def main():
-    go_home()
-    wait(0.5)
+    # Stage A 연속 왕복
+    stageA_s1_s2_roundtrip_3cycles_no_home()
 
-    stageA_s1_s2_roundtrip_3cycles()
-    stageB_s2_s3_movel_3cycles()
+    # Stage B: 고정점 운반 반복
+    stageB_s2_s3_fixedpoint_3cycles()
 
     do_homing()
     go_home()
