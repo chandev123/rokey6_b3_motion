@@ -1,12 +1,11 @@
 # ============================
 # Stage A: Shelf1<->Shelf2 : movej로 3번 연속 왕복 (HOME 반복 방문 X)
 #   - Shelf1 도착 후: X +20 -> wait 0.5 -> CLOSE -> X -10 -> Shelf2 이동
-#   - Shelf2에서 검사 후 OPEN(놓기) -> 바로 다음 Shelf1로
+#   - Shelf2에서 검사 후 OPEN(놓기)
 #
 # Stage B: Shelf2->Shelf3 : movel
-#   - Shelf2는 "하나의 고정 점"에서만 집기 (workspace 안정화)
-#   - Shelf3도 "하나의 고정 점"에만 계속 놓기
-#   - 위 작업을 3번 반복
+#   - Shelf2: 3점 (i=0,1,2)에서 집기 (x + 60*i)
+#   - Shelf3: 1점 고정 + "앞으로 숙이는(tilt)" 자세로 놓기
 # ============================
 
 Z_UP = 100.0
@@ -22,14 +21,19 @@ AJ = 70
 
 HOME_P = posx(367.22, 3.83, 201.28, 158.41, 179.96, 158.79)
 
-# 고정 posx 기반 픽/플레이스 점
-S2_BASE = (429.80, -258.59, 185.82, 115.72, -179.93, 116.62)  # Shelf2 fixed pick point
-S3_BASE = (429.06,  213.83,  87.06, 152.93,  179.97, 155.34)  # Shelf3 fixed place point
+S2_BASE = (429.80, -258.59, 185.82, 115.72, -179.93, 116.62)  # Shelf2 slot0 (posx)
+S3_BASE = (429.06,  213.83,  87.06, 152.93,  179.97, 155.34)  # Shelf3 fixed place (posx)
 
-# Shelf1 micro motion
+# Stage B: Shelf2 step
+S2_STEP_X = 60.0
+
+# Shelf1 micro motion (Stage A)
 S1_PICK_PUSH_X = 20.0
-S1_PICK_PULL_X = -20.0
+S1_PICK_PULL_X = -10.0
 S1_BEFORE_CLOSE_WAIT = 0.5
+
+# Shelf3 tilt (forward pitch-like)
+S3_TILT_DEG = 35.0   # 30~45 사이로 조절 (앞으로 숙이기)
 
 
 def do_homing():
@@ -100,46 +104,47 @@ def move_rel_x(dx, v=V_SLOW, a=A_SLOW):
 
 
 # -------------------------
-# Stage B fixed-point MOVEL helpers
+# Stage B: Shelf2 (3 points) pose helpers + Shelf3 (fixed tilt) pose helpers
 # -------------------------
-def s2_fixed_work_pose():
+def s2_work_pose(i):
     x0, y0, z0, A0, B0, C0 = S2_BASE
-    return posx(x0, y0, z0, A0, B0, C0)
+    return posx(x0 + i * S2_STEP_X, y0, z0, A0, B0, C0)
 
-def s2_fixed_app_pose():
+def s2_app_pose(i):
     x0, y0, z0, A0, B0, C0 = S2_BASE
-    return posx(x0, y0, z0 + Z_UP, A0, B0, C0)
+    return posx(x0 + i * S2_STEP_X, y0, z0 + Z_UP, A0, B0, C0)
 
-def s3_fixed_work_pose():
+# ✅ Shelf3: 앞으로 숙이기(tilt) = B에 +S3_TILT_DEG 적용
+def s3_fixed_work_pose_tilt():
     x0, y0, z0, A0, B0, C0 = S3_BASE
-    return posx(x0, y0, z0, A0, B0, C0)
+    return posx(x0, y0, z0, A0, B0 + S3_TILT_DEG, C0)
 
-def s3_fixed_app_pose():
+def s3_fixed_app_pose_tilt():
     x0, y0, z0, A0, B0, C0 = S3_BASE
-    return posx(x0, y0, z0 + Z_UP, A0, B0, C0)
+    return posx(x0, y0, z0 + Z_UP, A0, B0 + S3_TILT_DEG, C0)
 
 
-def movel_pick_s2_fixed():
-    movel(s2_fixed_app_pose(),  v=V_FAST, a=A_FAST)
-    movel(s2_fixed_work_pose(), v=V_SLOW, a=A_SLOW)
+def movel_pick_s2(i):
+    movel(s2_app_pose(i),  v=V_FAST, a=A_FAST)
+    movel(s2_work_pose(i), v=V_SLOW, a=A_SLOW)
     wait(0.2)
 
     close_gripper()
     wait(0.2)
 
-    movel(s2_fixed_app_pose(),  v=V_FAST, a=A_FAST)
+    movel(s2_app_pose(i),  v=V_FAST, a=A_FAST)
     wait(0.1)
 
 
-def movel_place_s3_fixed():
-    movel(s3_fixed_app_pose(),  v=V_FAST, a=A_FAST)
-    movel(s3_fixed_work_pose(), v=V_SLOW, a=A_SLOW)
+def movel_place_s3_fixed_tilt():
+    movel(s3_fixed_app_pose_tilt(),  v=V_FAST, a=A_FAST)
+    movel(s3_fixed_work_pose_tilt(), v=V_SLOW, a=A_SLOW)
     wait(0.2)
 
     open_gripper()
     wait(0.2)
 
-    movel(s3_fixed_app_pose(),  v=V_FAST, a=A_FAST)
+    movel(s3_fixed_app_pose_tilt(),  v=V_FAST, a=A_FAST)
     wait(0.1)
 
 
@@ -177,25 +182,21 @@ def stageA_s1_s2_roundtrip_3cycles_no_home():
         open_gripper()
         wait(0.2)
 
-        # ❗HOME으로 안 가고 바로 다음 i의 Shelf1로 넘어감
-        # (for loop가 다음 i로 진행)
+        # HOME 없이 다음 i로 진행
 
 
 # ============================================================
-# Stage B: Shelf2 fixed -> Shelf3 fixed 로만 3번 반복
+# Stage B: Shelf2(i=0,1,2)에서 집고 -> Shelf3 "고정 1점 + 앞으로 숙여서" 놓기
 # ============================================================
-def stageB_s2_s3_fixedpoint_3cycles():
-    for _ in range(3):
-        movel_pick_s2_fixed()
-        movel_place_s3_fixed()
+def stageB_s2_s3_s2_3points_s3_fixed_tilt_3cycles():
+    for i in range(3):
+        movel_pick_s2(i)               # Shelf2는 3점
+        movel_place_s3_fixed_tilt()    # Shelf3는 1점(tilt)
 
 
 def main():
-    # Stage A 연속 왕복
     stageA_s1_s2_roundtrip_3cycles_no_home()
-
-    # Stage B: 고정점 운반 반복
-    stageB_s2_s3_fixedpoint_3cycles()
+    stageB_s2_s3_s2_3points_s3_fixed_tilt_3cycles()
 
     do_homing()
     go_home()
