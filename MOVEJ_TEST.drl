@@ -232,3 +232,10 @@ def main():
     go_home()
 
 main()
+
+'''
+[2.1206] 입력된 목표점이 Workspace를 벗어남(목표점 또는 경유점의 위치 확인 필요)
+    [세부원인] [ERR] Pose(429.06mm[16.8921in], 213.83mm[8.4185in], 87.06mm[3.4276in], 0.00deg, -55.00deg, 0.00deg) is NOT REACHABLE
+    Param2 : 
+    Param3 : 
+'''
