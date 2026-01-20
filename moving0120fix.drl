@@ -1,0 +1,115 @@
+DX = 60.0
+DY = 60.0
+DZ = 60.0   # (이제 Shelf1엔 안 쓰지만, 남겨둠)
+
+Z_UP   = 100.0
+X_PULL = -100.0
+
+INSPECT_TIME = 4.0
+
+V_FAST = 50
+A_FAST = 50
+V_SLOW = 20
+A_SLOW = 20
+
+HOME_P = posx(367.22, 3.83, 201.28, 158.41, 179.96, 158.79)
+
+S1_BASE = (750.39,  200.46, 250.92,   2.36,   88.13,   2.04)   # Shelf1 base
+S2_BASE = (429.80, -258.59,  86.78, 115.36, -179.93, 116.26)  # Shelf2 base
+S3_BASE = (429.06,  213.83,  87.04, 154.82,  179.97, 155.23)  # Shelf3 base
+
+# --- NEW: per-shelf per-cycle offsets ---
+S1_DY_PER_CYCLE = -70.0   # Shelf1: each cycle, y decreases by 70
+S2_DX_PER_CYCLE =  60.0   # Shelf2: each cycle, x increases by 60
+S3_DX_PER_CYCLE =  60.0   # Shelf3: each cycle, x increases by 60
+
+
+def do_homing():
+    pass
+
+
+def apply_cycle_offset(base, cycle, dx=0.0, dy=0.0, dz=0.0):
+    """Return a new base tuple with per-cycle XYZ offset applied."""
+    x0, y0, z0, A0, B0, C0 = base
+    x = x0 + cycle * dx
+    y = y0 + cycle * dy
+    z = z0 + cycle * dz
+    return (x, y, z, A0, B0, C0)
+
+
+def slot_pose(base):
+    """Work pose is exactly the given base (already includes cycle offset)."""
+    x0, y0, z0, A0, B0, C0 = base
+    return posx(x0, y0, z0, A0, B0, C0)
+
+
+def app_pose_zup(base):
+    """Approach pose: same x/y, but z + Z_UP."""
+    x0, y0, z0, A0, B0, C0 = base
+    return posx(x0, y0, z0 + Z_UP, A0, B0, C0)
+
+
+def app_pose_xpull(base, x_pull):
+    """Shelf1 pull-out approach: x + x_pull (negative pulls back)."""
+    x0, y0, z0, A0, B0, C0 = base
+    return posx(x0 + x_pull, y0, z0, A0, B0, C0)
+
+
+def go_home():
+    movel(HOME_P, v=V_FAST, a=A_FAST)
+
+
+def go_shelf1_xpull(base_s1):
+    p_app  = app_pose_xpull(base_s1, X_PULL)
+    p_work = slot_pose(base_s1)
+    movel(p_app,  v=V_FAST, a=A_FAST)
+    movel(p_work, v=V_SLOW, a=A_SLOW)
+
+
+def leave_shelf1_xpull(base_s1):
+    p_app = app_pose_xpull(base_s1, X_PULL)
+    movel(p_app, v=V_FAST, a=A_FAST)
+
+
+def go_shelf_zup(base):
+    p_app  = app_pose_zup(base)
+    p_work = slot_pose(base)
+    movel(p_app,  v=V_FAST, a=A_FAST)
+    movel(p_work, v=V_SLOW, a=A_SLOW)
+
+
+def leave_shelf_zup(base):
+    p_app = app_pose_zup(base)
+    movel(p_app, v=V_FAST, a=A_FAST)
+
+
+def main():
+    for cycle in range(3):
+        # --- compute per-cycle bases ---
+        s1_cycle_base = apply_cycle_offset(S1_BASE, cycle, dy=S1_DY_PER_CYCLE)  # y -70 each cycle
+        s2_cycle_base = apply_cycle_offset(S2_BASE, cycle, dx=S2_DX_PER_CYCLE)  # x +60 each cycle
+        s3_cycle_base = apply_cycle_offset(S3_BASE, cycle, dx=S3_DX_PER_CYCLE)  # x +60 each cycle
+
+        # Start at HOME
+        go_home()
+
+        # 1) Shelf1 visit (x-pull approach), y shifts each cycle
+        go_shelf1_xpull(s1_cycle_base)
+        leave_shelf1_xpull(s1_cycle_base)
+        go_home()
+
+        # 2) Shelf2 visit + inspect wait, x shifts each cycle
+        go_shelf_zup(s2_cycle_base)
+        wait(INSPECT_TIME)
+        leave_shelf_zup(s2_cycle_base)
+
+        # 3) Shelf3 visit, x shifts each cycle
+        go_shelf_zup(s3_cycle_base)
+        leave_shelf_zup(s3_cycle_base)
+
+        # Optional homing each cycle (currently does nothing)
+        do_homing()
+        go_home()
+
+
+main()
