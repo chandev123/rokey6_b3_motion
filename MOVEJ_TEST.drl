@@ -5,10 +5,12 @@
 #
 # Stage B: Shelf2->Shelf3 : movel
 #   - Shelf2: 3점(i=0,1,2)에서 집기 (x + 60*i)
-#   - Shelf3: 1점 고정 + "Y축과 수직 / XY평면과 30~40도" 자세로 놓기
+#   - Shelf3: 1점 고정
+#     * 접근(APP)과 1차 작업점(WORK)은 "기존 S3_BASE 자세"로 (IK 안정)
+#     * 내려놓기 직전/직후에만 같은 XYZ에서 "기울인 자세"로 바꿔서 OPEN (해결책 1)
 # ============================
 
-Z_UP = 100.0
+Z_UP = 80.0
 INSPECT_TIME = 2.0
 
 V_FAST = 70
@@ -29,15 +31,14 @@ S2_STEP_X = 60.0
 
 # Shelf1 micro motion (Stage A)
 S1_PICK_PUSH_X = 20.0
-S1_PICK_PULL_X = -10.0
+S1_PICK_PULL_X = -20.0
 S1_BEFORE_CLOSE_WAIT = 0.5
 
-# --- Shelf3 orientation constraint ---
-# 목표:
-# 1) Tool 방향이 Y축과 수직 -> (툴 Z축 방향이 XZ 평면에 있도록) yaw/roll 최소화
-# 2) XY평면과 각(30~40도) -> 수평면에서 theta만큼 떠 있도록 pitch 크기 설정
+# Shelf3 tilt target (forward-lean in a constrained way)
+# - "XY평면과 30~40도"를 목표로 하면 B 크기가 커질 수 있어 workspace가 다시 빡셀 수 있음.
+# - 해결책1에서는 "접근은 기본 자세", "작업점에서만 잠깐 기울임"이라 훨씬 안정적.
 S3_TILT_TO_XY_DEG = 35.0   # 30~40에서 조절
-S3_TILT_SIGN = -1.0        # -1 또는 +1 (숙이는 방향이 반대면 부호만 바꾸면 됨)
+S3_TILT_SIGN = -1.0        # 방향이 반대면 +1/-1 바꾸기
 
 
 def do_homing():
@@ -120,34 +121,38 @@ def s2_app_pose(i):
 
 
 # -------------------------
-# Shelf3 fixed pose with constraint:
-# - "Y축과 수직" & "XY평면과 theta"
-# 구현:
-# - (A,C)=0 으로 두어 방향이 XZ평면에서 결정되도록 단순화
-# - B를 (90 - theta)로 잡아 수평면에서 theta만큼 떠있게
+# Shelf3: base pose helpers (IK 안정용: 기존 자세 그대로 사용)
 # -------------------------
-def _s3_target_abc():
-    # theta = XY평면과의 각 (30~40)
-    # 수평에 가까울수록 theta가 작고, 더 세울수록 theta가 커짐.
-    # 여기서는 "툴 방향이 XZ평면"으로 제한하기 위해 A=C=0로 고정.
-    theta = S3_TILT_TO_XY_DEG
-    B_mag = 90.0 - theta           # 예: theta=35 => B_mag=55
+def s3_app_pose_base():
+    x0, y0, z0, A0, B0, C0 = S3_BASE
+    return posx(x0, y0, z0 + Z_UP, A0, B0, C0)
+
+def s3_work_pose_base():
+    x0, y0, z0, A0, B0, C0 = S3_BASE
+    return posx(x0, y0, z0, A0, B0, C0)
+
+
+# -------------------------
+# Shelf3: constrained tilt pose (같은 XYZ에서 자세만 바꾸는 용도)
+# 해결책1: 접근/이탈은 base 자세로 하고, 작업점에서만 tilt 자세로 잠깐 바꿈
+# -------------------------
+def _s3_target_abc_constrained():
+    theta = S3_TILT_TO_XY_DEG      # 30~40
+    B_mag = 90.0 - theta           # 예: 35 -> 55
     A = 0.0
     B = S3_TILT_SIGN * B_mag
     C = 0.0
     return A, B, C
 
-def s3_fixed_work_pose_constrained():
+def s3_work_pose_tilt():
     x0, y0, z0, _, _, _ = S3_BASE
-    A, B, C = _s3_target_abc()
+    A, B, C = _s3_target_abc_constrained()
     return posx(x0, y0, z0, A, B, C)
 
-def s3_fixed_app_pose_constrained():
-    x0, y0, z0, _, _, _ = S3_BASE
-    A, B, C = _s3_target_abc()
-    return posx(x0, y0, z0 + Z_UP, A, B, C)
 
-
+# -------------------------
+# Stage B actions
+# -------------------------
 def movel_pick_s2(i):
     movel(s2_app_pose(i),  v=V_FAST, a=A_FAST)
     movel(s2_work_pose(i), v=V_SLOW, a=A_SLOW)
@@ -161,15 +166,22 @@ def movel_pick_s2(i):
 
 
 def movel_place_s3_fixed_constrained():
-    # Shelf3는 항상 같은 점 + 지정한 기울기 자세로 접근/놓기
-    movel(s3_fixed_app_pose_constrained(),  v=V_FAST, a=A_FAST)
-    movel(s3_fixed_work_pose_constrained(), v=V_SLOW, a=A_SLOW)
-    wait(0.2)
+    # 1) 접근/내려감은 "기존 자세"로 (workspace 안정)
+    movel(s3_app_pose_base(),  v=V_FAST, a=A_FAST)
+    movel(s3_work_pose_base(), v=V_SLOW, a=A_SLOW)
+    wait(0.1)
 
+    # 2) 같은 XYZ에서 "기울인 자세"로 잠깐 변경 (놓기 직전)
+    movel(s3_work_pose_tilt(), v=V_SLOW, a=A_SLOW)
+    wait(0.1)
+
+    # 3) 놓기
     open_gripper()
     wait(0.2)
 
-    movel(s3_fixed_app_pose_constrained(),  v=V_FAST, a=A_FAST)
+    # 4) 다시 "기존 자세"로 복귀 후 이탈
+    movel(s3_work_pose_base(), v=V_SLOW, a=A_SLOW)
+    movel(s3_app_pose_base(),  v=V_FAST, a=A_FAST)
     wait(0.1)
 
 
@@ -204,7 +216,7 @@ def stageA_s1_s2_roundtrip_3cycles_no_home():
 
 
 # ============================================================
-# Stage B: Shelf2(i=0,1,2)에서 집고 -> Shelf3 고정 1점(기울기 제약)으로 놓기
+# Stage B: Shelf2(i=0,1,2)에서 집고 -> Shelf3 고정 1점(기울기 잠깐)으로 놓기
 # ============================================================
 def stageB_s2_s3_s2_3points_s3_fixed_constrained_3cycles():
     for i in range(3):
