@@ -94,7 +94,7 @@ def insert_card_slot():
     movel(posx(0, 0, PIVOT_LEN, 0, 0, 0), v=5, a=5, mod=DR_MV_MOD_REL)
     movel(posx(0, 0, 0, 0, -TILT_ANGLE, 0), v=5, a=5, mod=DR_MV_MOD_REL)
     movel(posx(-X_SLIDE, 0, -PIVOT_LEN, 0, 0, 0), v=5, a=5, mod=DR_MV_MOD_REL)
-    wait(1.0)
+    wait(0.3)
     
     # 8. 삽입
     set_desired_force(
@@ -115,7 +115,8 @@ def insert_card_slot():
 
     # 그리퍼 열기
     open_gripper()
-    
+    wait(0.5)
+
     # z상승
     movel(posx(0,0,20,0,0,0),v =50,a=50,mod=DR_MV_MOD_REL)
 
