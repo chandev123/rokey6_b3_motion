@@ -5,6 +5,8 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 from std_msgs.msg import Float64MultiArray
 
+from dsr_msgs2.srv import MoveStop  # ✅ MoveStop service (dsr_msgs2)
+
 # DSR Imports
 import DR_init
 
@@ -20,58 +22,43 @@ ROBOT_TCP  = "GripperDA_v1"
 DR_init.__dsr__id = ROBOT_ID
 DR_init.__dsr__model = ROBOT_MODEL
 
-# Global Config Storage
 CONFIG = {}
 
 def load_config():
-    """Loads the pose_config.yaml file into the global CONFIG dictionary."""
     global CONFIG
     try:
-        # Try to find the package share directory first (installed location)
-        # If running from source without install, might need a fallback or ensuring access
-        # For development 'ros2 run', it usually uses the install/share path.
-        # Fallback to local relative path if needed, but 'share' is standard ROS2.
-        
-        # NOTE: Since we are editing source, we want to point to the SOURCE config for easy tuning?
-        # Standard ROS2 practice: valid config is in install/share.
-        # BUT user wants to tune "task node" easily. 
-        # If we use get_package_share_directory, they must rebuild/colcon install to see changes.
-        # To make it dynamic without rebuild, we can try to look at the source path or an absolute path if provided.
-        # For now, let's try to resolve the source path for convenience if available, or just use hardcoded path based on user workspace structure for this specific debugging session.
-        
-        # User workspace: /home/markch/cobot_ws/src/project_hit
         config_path = "/home/markch/cobot_ws/src/project_hit/config/pose_config.yaml"
-        
         if not os.path.exists(config_path):
-             print(f"Warning: Source config not found at {config_path}. Trying package share...")
-             pkg_path = get_package_share_directory('project_hit')
-             config_path = os.path.join(pkg_path, 'config', 'pose_config.yaml')
+            print(f"Warning: Source config not found at {config_path}. Trying package share...")
+            pkg_path = get_package_share_directory('project_hit')
+            config_path = os.path.join(pkg_path, 'config', 'pose_config.yaml')
 
         print(f"Loading configuration from: {config_path}")
         with open(config_path, 'r') as f:
             CONFIG.update(yaml.safe_load(f))
-            
         print("Configuration loaded successfully.")
     except Exception as e:
         print(f"ERROR: Failed to load configuration: {e}")
-        # Initialize with empty or defaults to prevent crash, but operations will fail
         CONFIG.clear()
+
+def get_config_val(path_str, default=None):
+    keys = path_str.split('.')
+    val = CONFIG
+    try:
+        for k in keys:
+            val = val[k]
+        return val
+    except (KeyError, TypeError):
+        print(f"Config Key Missing: {path_str}")
+        return default
 
 def initialize_robot():
     from DSR_ROBOT2 import set_tool, set_tcp
     set_tool(ROBOT_TOOL)
     set_tcp(ROBOT_TCP)
 
-    print("#" * 50)
-    print("Initializing robot with the following settings:")
-    print(f"ROBOT_ID: {ROBOT_ID}")
-    print(f"ROBOT_MODEL: {ROBOT_MODEL}")
-    print(f"ROBOT_TCP: {ROBOT_TCP}")
-    print(f"ROBOT_TOOL: {ROBOT_TOOL}")
-    print("#" * 50)
-
 # =========================================================
-# 1. Global Variables & Callbacks (for Sensing)
+# 1. ROS2 Sub Callback Data
 # =========================================================
 
 latest_force = None     # [fx, fy, fz, mx, my, mz]
@@ -90,12 +77,10 @@ def spin_thread(node):
     executor.add_node(node)
     executor.spin()
 
-
 # =========================================================
-# 2. Motion Constants & Functions (from motion_control)
+# 2. Motion / Helper Functions
 # =========================================================
 
-# --- Speed Settings ---
 VEL_LINEAR_FAST = 70
 ACC_LINEAR_FAST = 70
 VEL_LINEAR_APPROACH = 20
@@ -104,74 +89,34 @@ ACC_LINEAR_APPROACH = 20
 VEL_JOINT_DEFAULT = 70
 ACC_JOINT_DEFAULT = 70
 
-# --- Poses & Waypoints (MAPPED FROM CONFIG) ---
-# Accessors will be used inside functions to ensure CONFIG is loaded
-
-def get_config_val(path_str, default=None):
-    """Helper to retrieve nested keys 'a.b.c'."""
-    keys = path_str.split('.')
-    val = CONFIG
-    try:
-        for k in keys:
-            val = val[k]
-        return val
-    except (KeyError, TypeError):
-        print(f"Config Key Missing: {path_str}")
-        return default
-
-# --- Helpers for Motion ---
-
 def gripper_open():
     from DSR_ROBOT2 import set_digital_output, wait, ON, OFF
-    set_digital_output(2, ON)
-    wait(1.00)
-    set_digital_output(2, OFF)
+    set_digital_output(2, ON); wait(1.00); set_digital_output(2, OFF)
 
 def gripper_close():
     from DSR_ROBOT2 import set_digital_output, wait, ON, OFF
-    set_digital_output(1, ON)
-    wait(1.00)
-    set_digital_output(1, OFF)
+    set_digital_output(1, ON); wait(1.00); set_digital_output(1, OFF)
 
 def move_joint(q):
     from DSR_ROBOT2 import movej, posj
     movej(posj(q), vel=VEL_JOINT_DEFAULT, acc=ACC_JOINT_DEFAULT)
 
-def move_home():
-    from DSR_ROBOT2 import movel, posx
-    home_cart = get_config_val('poses.home_cartesian')
-    if home_cart:
-        HOME_P = posx(home_cart)
-        movel(HOME_P, vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_FAST)
-    else:
-        print("Error: Home Cartesian Pose not defined.")
-
 def move_home_joint():
-    """Moves to the home position defined by joint angles."""
     from DSR_ROBOT2 import movej, posj
     home_joint = get_config_val('poses.home_joint', [0,0,90,0,90,0])
     movej(posj(home_joint), vel=VEL_JOINT_DEFAULT, acc=ACC_JOINT_DEFAULT)
 
-def move_to_pose(pose_list):
-    """Moves to a specific Cartesian pose."""
-    from DSR_ROBOT2 import movel, posx
-    target = posx(pose_list)
-    movel(target, vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_FAST)
-
 def _extract_posx6(p):
-    # Case A: p is [x, y, z, rx, ry, rz] (Flat list of floats)
-    # Check if p has 6 elements AND the first element is a number (float/int), not a list/tuple
     try:
         if len(p) >= 6 and isinstance(p[0], (int, float)):
-             return p[0], p[1], p[2], p[3], p[4], p[5]
-    except Exception: pass
-
-    # Case B: p is [[x, y, z, rx, ry, rz], solution_space] (Nested structure)
+            return p[0], p[1], p[2], p[3], p[4], p[5]
+    except Exception:
+        pass
     try:
         if len(p) >= 1 and hasattr(p[0], '__len__') and len(p[0]) >= 6:
-             return p[0][0], p[0][1], p[0][2], p[0][3], p[0][4], p[0][5]
-    except Exception: pass
-    
+            return p[0][0], p[0][1], p[0][2], p[0][3], p[0][4], p[0][5]
+    except Exception:
+        pass
     raise RuntimeError(f"Cannot extract 6D pose from get_current_posx(). Data: {p}")
 
 def _wrap_deg(a):
@@ -196,208 +141,142 @@ def _pose_tilt_from_pose(p6, pitch_delta):
     B2 = _wrap_deg(B + pitch_delta)
     return posx([x, y, z, A, B2, C])
 
-def move_rel_x(dx, vel=VEL_LINEAR_APPROACH, acc=ACC_LINEAR_APPROACH):
-    from DSR_ROBOT2 import get_current_posx, movel, posx
-    p = get_current_posx()
-    x, y, z, A, B, C = _extract_posx6(p)
-    movel(posx([x + dx, y, z, A, B, C]), vel=vel, acc=acc)
+def log_info(step, msg):
+    print(f"[INFO] [{step}] {msg}")
 
-def emergency_stop_motion():
-    """Stops robot motion ASAP (best-effort)."""
+# =========================================================
+# 3. MoveStop(QSTOP=0) Client + emergency_stop_motion
+# =========================================================
+
+_stop_cli = None
+
+def init_move_stop_client(node):
+    """Create MoveStop service client once."""
+    global _stop_cli
+    if _stop_cli is not None:
+        return
+
+    # ✅ 너 환경 서비스 이름에 맞춰야 하는 부분 (ros2 service list로 확인)
+    service_name = f"/{ROBOT_ID}/motion/move_stop"
+    _stop_cli = node.create_client(MoveStop, service_name)
+
+    if not _stop_cli.wait_for_service(timeout_sec=2.0):
+        node.get_logger().warn(f"[MoveStop] service not available: {service_name}")
+
+def emergency_stop_motion(node):
+    """
+    ✅ 즉시 정지: MoveStop(QSTOP=0)
+    - QSTOP(0) 고정
+    """
+    global _stop_cli
+    if _stop_cli is None:
+        init_move_stop_client(node)
+    if _stop_cli is None:
+        print("[WARN] MoveStop client not ready")
+        return
+
     try:
-        from DSR_ROBOT2 import drl_script_stop, DR_QSTOP
-        drl_script_stop(DR_QSTOP)
+        req = MoveStop.Request()
+        req.stop_mode = 0  # ✅ QSTOP(0)
+        _stop_cli.call_async(req)
     except Exception as e:
-        print(f"[WARN] emergency_stop_motion failed: {e}")
+        print(f"[WARN] emergency_stop_motion(MoveStop) failed: {e}")
+
+# =========================================================
+# 4. Force-based collision + step move (no wait_motion_done)
+# =========================================================
 
 def detect_collision_fz(th=15.0):
-    """Simple collision detector using Fz threshold."""
     global latest_force
     if latest_force is None:
         return False
     fz = float(latest_force[2])
     return abs(fz) > th
 
-def handle_collision_and_drop(step_id, holding):
+def movel_rel_step(rel6_total, step_mm=5.0, vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_FAST, node=None, th=15.0):
     """
-    Collision handler: stop, go to drop zone (if configured), open gripper.
-    Uses global DROP_ZONE_JOINT (loaded from YAML earlier).
-    Returns updated holding flag.
+    ✅ REL 이동을 step으로 쪼개서 자주 force 체크
+    rel6_total: [dx,dy,dz,dRx,dRy,dRz]
     """
-    emergency_stop_motion()
+    from DSR_ROBOT2 import movel, posx, DR_MV_MOD_REL, wait
 
-    global DROP_ZONE_JOINT
+    dx, dy, dz, dA, dB, dC = rel6_total
 
-    if holding and DROP_ZONE_JOINT:
-        log_info(step_id, "Collision -> Go DROP_ZONE and release")
-        try:
-            from DSR_ROBOT2 import movej, posj
-            movej(posj(DROP_ZONE_JOINT), vel=60, acc=60)  # 안전을 위해 동기 이동 추천
-            gripper_open()
-            holding = False
-        except Exception as e:
-            print(f"[WARN] drop zone move failed: {e}")
+    def _split(v):
+        if v == 0:
+            return (0, 0.0)
+        n = int(abs(v) // step_mm)
+        r = abs(v) - n * step_mm
+        return (n, r)
 
-    return holding
+    nx, rx = _split(dx)
+    ny, ry = _split(dy)
+    nz, rz = _split(dz)
 
-# =========================================================
-# 3. Insertion Logic (from insert_card_slot)
-# =========================================================
-
-def execute_insertion_at(target_pose_list):
-    """
-    Moves to target_pose_list and performs insertion.
-    Args:
-        target_pose_list: [x, y, z, rx, ry, rz] coordinates where insertion starts.
-    """
-    from DSR_ROBOT2 import (
-        movel, posx, wait, task_compliance_ctrl, release_compliance_ctrl,
-        set_stiffnessx, set_desired_force, release_force,
-        DR_MV_MOD_REL, DR_FC_MOD_ABS, DR_QSTOP, drl_script_stop
-    )
-
-    # 0. Constants from Config
-    ins_cfg = get_config_val('insertion', {})
-    
-    FZ_CONTACT = ins_cfg.get('fz_contact', 6.0)
-    SLIDE_DIST = ins_cfg.get('slide_dist', 60.0)
-    SLIDE_STEP = ins_cfg.get('slide_step', 5.0)
-    FZ_DELTA_TH = ins_cfg.get('fz_delta_th', 8.0)
-    TY_DELTA_TH = ins_cfg.get('ty_delta_th', 0.2)
-    TILT_ANGLE = ins_cfg.get('tilt_angle', 10.0)
-    PIVOT_LEN = ins_cfg.get('pivot_len', 5.0)
-    X_SLIDE = ins_cfg.get('x_slide', 6.1)
-    
-    STIFFNESS = ins_cfg.get('stiffness', [1000,1000,300,100,100,100])
-    FORCE_DES_CONTACT = ins_cfg.get('force_des_contact', [0, 0, -20, 0, 0, 0])      
-    FORCE_DES_SLIDE = ins_cfg.get('force_des_slide', [0, 0, -10, 0, 0, 0])
-    FORCE_DES_FINAL = ins_cfg.get('force_des_final', [0, 0, -15, 0, 0, 0])
-
-    print(f"Starting Insertion at {target_pose_list}...")
-
-    # 1. Move to Start Pose
-    target_p = posx(target_pose_list)
-    movel(target_p, v=50, a=50)   
-    
- # Approach (Z -20 relative)
-    movel([0,0,-20,0,0,0], v=20, a=20, mod=DR_MV_MOD_REL)
-
-    # 2. Force Control Start
-    task_compliance_ctrl()
-    set_stiffnessx(STIFFNESS)
-    set_desired_force(FORCE_DES_CONTACT, [0, 0, 1, 0, 0, 0], mod=DR_FC_MOD_ABS)
-    wait(0.2)
-
-    # 3. Z Descent (Contact Detection)
-    # Using global 'latest_force' updated by callback 
-    while True:
-        if latest_force is None:
-            wait(0.2)
-            continue
-
-        fz = latest_force[2]
-        if fz >= FZ_CONTACT:
-            drl_script_stop(DR_QSTOP) # Stop immediately
-            break
-    
-    # 4. Release Force
-    release_force(time=0.1)
-    release_compliance_ctrl()
-    wait(1.0)
-    
-    # 5. Tilt Gripper
-    movel(posx(0, 0, PIVOT_LEN, 0, 0, 0), v= 10, a= 10, mod=DR_MV_MOD_REL)
-    movel(posx(0, 0, 0, 0, TILT_ANGLE, 0), v= 1, a= 1, mod=DR_MV_MOD_REL)
-    movel(posx(X_SLIDE, 0, -PIVOT_LEN, 0, 0, 0), v= 10, a= 10, mod=DR_MV_MOD_REL)
-    wait(0.1)
-    
-    # 6. Slide & Insert loop
-    task_compliance_ctrl()
-    set_stiffnessx(STIFFNESS)
-    set_desired_force(FORCE_DES_SLIDE, [0, 0, 1, 0, 0, 0], mod=DR_FC_MOD_ABS)
-    wait(0.01)
-
-    while latest_force is None or latest_posx is None:
+    def _apply_step(sx, sy, sz):
+        if node is not None and detect_collision_fz(th):
+            emergency_stop_motion(node)
+            return False
+        movel(posx([sx, sy, sz, 0, 0, 0]), vel=vel, acc=acc, mod=DR_MV_MOD_REL)
         wait(0.01)
-    
-    prev_fz = latest_force[2]
-    prev_ty = latest_force[4]
-    
-    moved = 0.0
-    while moved < SLIDE_DIST:
-        movel(posx(SLIDE_STEP, 0, 0, 0, 0, 0), v= 10, a= 10, mod=DR_MV_MOD_REL)
-        moved += SLIDE_STEP
-        
-        fz = latest_force[2]
-        ty = latest_force[4]
-        
-        if abs(fz - prev_fz) > FZ_DELTA_TH or abs(ty - prev_ty) > TY_DELTA_TH:
-            drl_script_stop(DR_QSTOP)
-            break
-        prev_fz = fz
-        prev_ty = ty
+        if node is not None and detect_collision_fz(th):
+            emergency_stop_motion(node)
+            return False
+        return True
 
-    # 7. Restore & Final Push
-    movel(posx(0, 0, PIVOT_LEN, 0, 0, 0), v=5, a=5, mod=DR_MV_MOD_REL)
-    movel(posx(0, 0, 0, 0, -TILT_ANGLE, 0), v=5, a=5, mod=DR_MV_MOD_REL)
-    movel(posx(-X_SLIDE, 0, -PIVOT_LEN, 0, 0, 0), v=5, a=5, mod=DR_MV_MOD_REL)
-    wait(1.0)
-    
-    set_desired_force(FORCE_DES_FINAL, [0, 0, 1, 0, 0, 0], mod=DR_FC_MOD_ABS)
-    wait(0.2)
-    
-    # Wait for full contact
-    while True:
-        if latest_force and latest_force[2] >= 8:
-            break
-        wait(0.1)
+    # X
+    if dx != 0:
+        sx = step_mm if dx > 0 else -step_mm
+        for _ in range(nx):
+            if not _apply_step(sx, 0, 0): return False
+        if rx > 0 and not _apply_step((rx if dx > 0 else -rx), 0, 0): return False
 
-    release_force(time=0.1)
-    release_compliance_ctrl()
+    # Y
+    if dy != 0:
+        sy = step_mm if dy > 0 else -step_mm
+        for _ in range(ny):
+            if not _apply_step(0, sy, 0): return False
+        if ry > 0 and not _apply_step(0, (ry if dy > 0 else -ry), 0): return False
 
-    # Move Up & Open
-    movel(posx(0,0,20,0,0,0),v=50, a=50, mod=DR_MV_MOD_REL)
-    gripper_open()
-    print("Insertion Completed.")
+    # Z
+    if dz != 0:
+        sz = step_mm if dz > 0 else -step_mm
+        for _ in range(nz):
+            if not _apply_step(0, 0, sz): return False
+        if rz > 0 and not _apply_step(0, 0, (rz if dz > 0 else -rz)): return False
 
+    # Rotation (한 번에)
+    if any(abs(v) > 0 for v in [dA, dB, dC]):
+        if node is not None and detect_collision_fz(th):
+            emergency_stop_motion(node); return False
+        movel(posx([0, 0, 0, dA, dB, dC]), vel=vel, acc=acc, mod=DR_MV_MOD_REL)
+        wait(0.01)
+        if node is not None and detect_collision_fz(th):
+            emergency_stop_motion(node); return False
+
+    return True
 
 # =========================================================
-# 4. Custom Sequence (Mixing Motion & Insert)
+# 5. Task Logic (Stage B integrated)
 # =========================================================
 
-def log_info(step, msg):
-    """Helper for consistent logging."""
-    print(f"[INFO] [{step}] {msg}")
+def perform_task(node):
+    from DSR_ROBOT2 import wait, movel
 
-def perform_task():
-    """
-    Replicates the original motion_control sequence, BUT using the integrated task_node structure.
-    """
-    from DSR_ROBOT2 import wait, movel, movej, get_current_posx, get_current_posj, posj # Ensure imports available locally if needed
-    
     log_info("Init", "Starting Task Sequence...")
-    
-    # --- 1. Homing ---
-    log_info("Home", "Moving to Home Joint Pose...")
     move_home_joint()
     wait(0.3)
-    
-    # Config Variables
-    JOINT_POSES_SHELF_1 = get_config_val('poses.shelf_1.joint_poses', [])
-    OFFSET_S1_APPROACH_X = get_config_val('poses.shelf_1.approach_x_offset', 20.0)
-    OFFSET_S1_RETRACT_X = get_config_val('poses.shelf_1.retract_x_offset', -10.0)
-    WAIT_GRIPPER_STABILIZE_SEC = get_config_val('poses.shelf_1.wait_stabilize_sec', 0.5)
-    
-    DROP_ZONE_JOINT = get_config_val('poses.drop_zone_joint', [])
 
+    # ===== config =====
+    JOINT_POSES_SHELF_1 = get_config_val('poses.shelf_1.joint_poses', [])
     JOINT_POSES_SHELF_2 = get_config_val('poses.shelf_2.joint_poses', [])
-    WAIT_INSPECTION_SEC = get_config_val('poses.shelf_3_tilt.wait_inspection_sec', 2.0)
-    
-    ANGLE_S3_TILT_DEG = get_config_val('poses.shelf_3_tilt.angle_deg', 20.0)
-    DIR_S3_TILT_SIGN = get_config_val('poses.shelf_3_tilt.direction_sign', -1.0)
-    
+    DROP_ZONE_JOINT     = get_config_val('poses.drop_zone_joint', [])
     Q_WAYPOINT_TRANSITION = get_config_val('poses.transition_waypoint')
-    INSERT_TARGET = get_config_val('poses.insert_a_target') # Load Insertion Target
+
+    ANGLE_S3_TILT_DEG = get_config_val('poses.shelf_3_tilt.angle_deg', 20.0)
+    DIR_S3_TILT_SIGN  = get_config_val('poses.shelf_3_tilt.direction_sign', -1.0)
+
+    cycle_count = min(len(JOINT_POSES_SHELF_1), len(JOINT_POSES_SHELF_2), 3)
     
     log_info("DEBUG", f"Loaded INSERT_TARGET: {INSERT_TARGET}")  # DEBUG
 
@@ -483,126 +362,98 @@ def perform_task():
         log_info(step_id, "Cycle Completed")
 
     # --- 3. Stage B: Shelf 2 -> Transition -> (Success: Y+120 Tilt Drop / Fail: Transition Drop) ---
-    log_info("Stage B", f"Starting Shelf 2 -> Tilt -> Place Loop ({cycle_count} cycles)")
+     log_info("Stage B", f"Starting Stage B ({cycle_count} cycles)")
 
-    # 3회 중 2회 성공, 1회 실패 (순서 랜덤)
     import random
     results = [True, True, False][:cycle_count]
     random.shuffle(results)
 
-    holding = False        # 현재 물건을 집고 있는지
-    pending_drop = False   # 충돌/서보OFF 등으로 "드롭이 아직 안 됨" 상태 플래그
-
+    holding = False
+    pending_drop = False
     COLLISION_FZ_TH = 15.0
 
     for i in range(cycle_count):
         step_id = f"B-{i+1}"
         is_success = results[i]
 
-        # ------------------------------------------------------------
-        # 3.0 Pending Drop 처리 (서보 ON 된 뒤 DROP_ZONE으로 가서 반드시 내려놓기)
-        # ------------------------------------------------------------
+        # ---- pending drop (서보ON 이후에 DROP_ZONE으로 가서 반드시 내려놓기) ----
         if pending_drop:
             if holding and DROP_ZONE_JOINT:
-                log_info(step_id, "Pending drop detected -> Trying to go DROP_ZONE and release")
+                log_info(step_id, "Pending drop -> go DROP_ZONE and release")
                 try:
-                    from DSR_ROBOT2 import movej, posj, wait
-                    # 여기서는 동기 movej로 안전하게 이동 시도
-                    movej(posj(DROP_ZONE_JOINT), vel=60, acc=60)
+                    move_joint(DROP_ZONE_JOINT)
                     wait(0.1)
                     gripper_open()
                     holding = False
                     pending_drop = False
-                    log_info(step_id, "Pending drop completed.")
+                    log_info(step_id, "Pending drop done.")
                 except Exception as e:
-                    # 서보 OFF 상태면 movej 자체가 실패할 수 있음
-                    log_info(step_id, f"Pending drop failed (maybe SERVO OFF). Retry next loop. err={e}")
-                    # 다음 루프에서 다시 시도 (cycle 진행은 보류)
+                    log_info(step_id, f"Pending drop failed (maybe SERVO OFF). err={e}")
                     continue
             else:
-                # 들고있지 않거나 drop zone이 없으면 pending 해제
                 pending_drop = False
 
-        # ------------------------------------------------------------
-        # 3.1 Pick from Shelf 2 (비동기 + 충돌 감시)
-        # ------------------------------------------------------------
-        log_info(step_id, f"Moving to Shelf 2 Pose {i+1} (Pick)")
-        ok = async_movej_and_monitor(
-            JOINT_POSES_SHELF_2[i],
-            vel=100, acc=100,
-            on_event=lambda: detect_collision_fz(COLLISION_FZ_TH)
-        )
-        if not ok:
-            log_info(step_id, "Collision while moving to shelf2 pick pose.")
-            # 집기 전이면 holding False → pending_drop 필요 없음
-            emergency_stop_motion()
+        # ---- 1) move to shelf2 pick ----
+        log_info(step_id, f"Move to Shelf2 pick pose {i+1}")
+        move_joint(JOINT_POSES_SHELF_2[i])
+        wait(0.01)
+        if detect_collision_fz(COLLISION_FZ_TH):
+            log_info(step_id, "Collision right after move_joint (pick pose)")
+            emergency_stop_motion(node)
             continue
 
-        # 내려가기 (REL, 비동기 + 감시)
-        ok = async_movel_rel_and_monitor(
-            [0, 0, -50, 0, 0, 0],
-            vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_FAST,
-            on_event=lambda: detect_collision_fz(COLLISION_FZ_TH)
-        )
+        # ---- 2) descend ----
+        ok = movel_rel_step([0, 0, -50, 0, 0, 0],
+                            step_mm=5.0, vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_FAST,
+                            node=node, th=COLLISION_FZ_TH)
         if not ok:
-            log_info(step_id, "Collision while descending.")
-            emergency_stop_motion()
+            log_info(step_id, "Collision while descending")
+            pending_drop = holding
             continue
 
-        # 집기
+        # ---- 3) grip ----
         log_info(step_id, "Gripper CLOSE")
         gripper_close()
         holding = True
 
-        # 들어올리기 (REL, 비동기 + 감시)
-        ok = async_movel_rel_and_monitor(
-            [0, 0, 50, 0, 0, 0],
-            vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_FAST,
-            on_event=lambda: detect_collision_fz(COLLISION_FZ_TH)
-        )
+        # ---- 4) lift ----
+        ok = movel_rel_step([0, 0, 50, 0, 0, 0],
+                            step_mm=5.0, vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_FAST,
+                            node=node, th=COLLISION_FZ_TH)
         if not ok:
-            log_info(step_id, "Collision while lifting (holding=True). Will pending_drop.")
-            emergency_stop_motion()
+            log_info(step_id, "Collision while lifting -> pending_drop")
             pending_drop = True
-            # 다음 loop 진입 시 DROP_ZONE 재시도
             continue
 
-        # ------------------------------------------------------------
-        # 3.2 Move to Transition Waypoint (비동기 + 감시)
-        # ------------------------------------------------------------
+        # ---- 5) go transition ----
         if Q_WAYPOINT_TRANSITION:
-            log_info(step_id, "Moving to Transition Waypoint")
-            ok = async_movej_and_monitor(
-                Q_WAYPOINT_TRANSITION,
-                vel=100, acc=100,
-                on_event=lambda: detect_collision_fz(COLLISION_FZ_TH)
-            )
-            if not ok:
-                log_info(step_id, "Collision while moving to transition (holding=True). Will pending_drop.")
-                emergency_stop_motion()
+            log_info(step_id, "Move to Transition Waypoint")
+            try:
+                move_joint(Q_WAYPOINT_TRANSITION)
+                wait(0.01)
+                if detect_collision_fz(COLLISION_FZ_TH):
+                    raise RuntimeError("Collision after transition move")
+            except Exception as e:
+                log_info(step_id, f"Collision/Move error at transition: {e}")
+                emergency_stop_motion(node)
                 pending_drop = True
                 continue
 
-        # ------------------------------------------------------------
-        # 3.3 Success / Fail Branch
-        # ------------------------------------------------------------
+        # ---- 6) success/fail branch ----
         if is_success:
-            # 성공: 현재 자세 기준 Y+200 위치에서 tilt -> open -> restore
             cur6 = list(_pose_from_current())
             cur6[1] += 200  
 
             p_work = _pose_same(cur6)
             p_tilt = _pose_tilt_from_pose(cur6, DIR_S3_TILT_SIGN * ANGLE_S3_TILT_DEG)
 
-            log_info(step_id, f"[SUCCESS] Tilt {DIR_S3_TILT_SIGN * ANGLE_S3_TILT_DEG} deg @ Y+120")
-            ok = async_movel_and_monitor(
-                p_tilt,
-                vel=VEL_LINEAR_APPROACH, acc=ACC_LINEAR_APPROACH,
-                on_event=lambda: detect_collision_fz(COLLISION_FZ_TH)
-            )
-            if not ok:
-                log_info(step_id, "Collision during tilt (holding=True). Will pending_drop.")
-                emergency_stop_motion()
+            log_info(step_id, f"[SUCCESS] Tilt + Drop @ Y+120 (tilt={DIR_S3_TILT_SIGN * ANGLE_S3_TILT_DEG}deg)")
+            movel(p_tilt, vel=VEL_LINEAR_APPROACH, acc=ACC_LINEAR_APPROACH)
+            wait(0.01)
+
+            if detect_collision_fz(COLLISION_FZ_TH):
+                log_info(step_id, "Collision during tilt -> pending_drop")
+                emergency_stop_motion(node)
                 pending_drop = True
                 continue
 
@@ -610,92 +461,71 @@ def perform_task():
             gripper_open()
             holding = False
 
-            log_info(step_id, "Restoring Orientation")
-            ok = async_movel_and_monitor(
-                p_work,
-                vel=VEL_LINEAR_APPROACH, acc=ACC_LINEAR_APPROACH,
-                on_event=lambda: detect_collision_fz(COLLISION_FZ_TH)
-            )
-            if not ok:
-                # 이미 drop은 했지만 충돌이 났으면 일단 멈추고 다음 cycle로
-                log_info(step_id, "Collision during restore (holding=False). Stop and continue.")
-                emergency_stop_motion()
+            log_info(step_id, "Restore orientation")
+            movel(p_work, vel=VEL_LINEAR_APPROACH, acc=ACC_LINEAR_APPROACH)
+            wait(0.01)
+
+            if detect_collision_fz(COLLISION_FZ_TH):
+                log_info(step_id, "Collision during restore")
+                emergency_stop_motion(node)
                 continue
 
         else:
-            # 실패: Transition에서 바로 open
-            log_info(step_id, "[FAIL] Drop at TRANSITION waypoint (OPEN only)")
+            log_info(step_id, "[FAIL] Drop at Transition (OPEN only)")
             gripper_open()
             holding = False
 
-            ok = async_movel_rel_and_monitor(
-                [0, 0, 50, 0, 0, 0],
-                vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_FAST,
-                on_event=lambda: detect_collision_fz(COLLISION_FZ_TH)
-            )
+            ok = movel_rel_step([0, 0, 50, 0, 0, 0],
+                                step_mm=5.0, vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_FAST,
+                                node=node, th=COLLISION_FZ_TH)
             if not ok:
-                log_info(step_id, "Collision while retracting after FAIL drop.")
-                emergency_stop_motion()
+                log_info(step_id, "Collision while retract after FAIL -> pending_drop")
+                pending_drop = True
                 continue
 
-        log_info(step_id, f"Cycle Completed (success={is_success})")
+        log_info(step_id, f"Cycle completed (success={is_success})")
 
-    # Stage B 종료 후 홈
     log_info("End", "Moving Home (after Stage B)")
     move_home_joint()
-    log_info("End", "All tasks completed successfully.")
+    log_info("End", "All tasks completed.")
 
 # =========================================================
-# X. Main Execution
+# Main
 # =========================================================
 
 def main(args=None):
     rclpy.init(args=args)
-    
-    # 0. Load Config First
     load_config()
 
-    # 1. Node Creation
-    # This node handles BOTH robot control (DSR) and topic subscription
     node = rclpy.create_node("task_node_integrated", namespace=ROBOT_ID)
-    
-    # 2. Setup DSR
     DR_init.__dsr__node = node
-    
-    # 3. Setup Subscribers
+
+    init_move_stop_client(node)
+
     node.create_subscription(Float64MultiArray, "/tool_force", force_callback, 10)
     node.create_subscription(Float64MultiArray, "/current_posx", posx_callback, 10)
-    
-    # 4. Start Background Spin (for Callbacks)
+
     t = threading.Thread(target=spin_thread, args=(node,), daemon=True)
     t.start()
-    
+
     try:
-        # 5. Robot Initialization
         initialize_robot()
-        
-        # 6. Execute Task Sequence
-        # This function will be defined later by merging motion/insert functions
-        if 'perform_task' in globals():
-            perform_task()
-        else:
-            print("Warning: perform_task function is not yet defined.")
+        perform_task(node)
 
     except KeyboardInterrupt:
         print("\nShutting down task node...")
         try:
-             # Safety: Return to Start Position (Home) on Interrupt
-             print("Safety Homing Triggered...")
-             move_home_joint()
+            print("Safety Homing Triggered...")
+            move_home_joint()
         except Exception as home_err:
-             print(f"Failed to safety home: {home_err}")
+            print(f"Failed to safety home: {home_err}")
+
     except Exception as e:
         print(f"Unexpected error: {e}")
+
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
-
 
 if __name__ == "__main__":
     main()
