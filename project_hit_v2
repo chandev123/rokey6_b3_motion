@@ -418,7 +418,7 @@ def perform_task():
         move_joint(JOINT_POSES_SHELF_1[i])
         entry_point = get_current_posx()
         if cycle_count == 1:
-            entry_point[0][0]=entry_point[0][0] +5
+            entry_point[0][0]=entry_point[0][0]
         else:
             entry_point[0][0]=entry_point[0][0] +12
         if cycle_count == 2:
