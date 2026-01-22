@@ -514,7 +514,7 @@ def perform_task():
     # 알고리즘
     # 삽입확인...
         #알고리즘 생기면 이 함수 삭제.
-        movel(posx(1, 0, -30, 0, 0, 0), vel=VEL_LINEAR_APPROACH, acc=ACC_LINEAR_APPROACH, mod=DR_MV_MOD_REL)
+        movel(posx(0, 0, -30, 0, 0, 0), vel=VEL_LINEAR_APPROACH, acc=ACC_LINEAR_APPROACH, mod=DR_MV_MOD_REL)
 
         wait(0.5)
         
@@ -541,7 +541,6 @@ def perform_task():
     holding = False        # 현재 물건을 집고 있는지
     pending_drop = False   # 충돌/서보OFF 등으로 "드롭이 아직 안 됨" 상태 플래그
 
-    # (선택) 더 엄격하게 충돌 감지 임계치/폴링 간격을 조정할 수 있음
     COLLISION_FZ_TH = 15.0
 
     for i in range(cycle_count):
@@ -636,7 +635,7 @@ def perform_task():
         # 3.3 Success / Fail Branch
         # ------------------------------------------------------------
         if is_success:
-            # 성공: 현재 자세 기준 Y+120 위치에서 tilt -> open -> restore
+            # 성공: 현재 자세 기준 Y+200 위치에서 tilt -> open -> restore
             cur6 = list(_pose_from_current())
             cur6[1] += 200  
 
@@ -677,7 +676,6 @@ def perform_task():
             gripper_open()
             holding = False
 
-            # (선택) 실패 후 위로 리트랙 50mm (충돌 감시 포함)
             ok = async_movel_rel_and_monitor(
                 [0, 0, 50, 0, 0, 0],
                 vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_FAST,
