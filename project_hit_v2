@@ -203,6 +203,91 @@ def move_rel_x(dx, vel=VEL_LINEAR_APPROACH, acc=ACC_LINEAR_APPROACH):
     x, y, z, A, B, C = _extract_posx6(p)
     movel(posx([x + dx, y, z, A, B, C]), vel=vel, acc=acc)
 
+def emergency_stop_motion():
+    """Stops robot motion ASAP (best-effort)."""
+    try:
+        from DSR_ROBOT2 import drl_script_stop, DR_QSTOP
+        drl_script_stop(DR_QSTOP)
+    except Exception as e:
+        print(f"[WARN] emergency_stop_motion failed: {e}")
+
+def detect_collision_fz(th=15.0):
+    """Simple collision detector using Fz threshold."""
+    global latest_force
+    if latest_force is None:
+        return False
+    fz = float(latest_force[2])
+    return abs(fz) > th
+
+def async_movej_and_monitor(q, vel=100, acc=100, poll_dt=0.02, on_event=None):
+    """
+    amovej + wait_motion_done polling.
+    Returns True if reached, False if event detected.
+    """
+    from DSR_ROBOT2 import amovej, wait_motion_done, wait, posj
+    amovej(posj(q), vel=vel, acc=acc)
+
+    while True:
+        done = wait_motion_done(timeout=poll_dt)
+        if done:
+            return True
+        if on_event is not None and on_event():
+            return False
+        wait(poll_dt)
+
+def async_movel_and_monitor(p, vel=50, acc=50, poll_dt=0.02, on_event=None):
+    """
+    amovel + wait_motion_done polling.
+    p should be posx(...) result.
+    """
+    from DSR_ROBOT2 import amovel, wait_motion_done, wait
+    amovel(p, v=vel, a=acc)
+
+    while True:
+        done = wait_motion_done(timeout=poll_dt)
+        if done:
+            return True
+        if on_event is not None and on_event():
+            return False
+        wait(poll_dt)
+
+def async_movel_rel_and_monitor(rel6, vel=50, acc=50, poll_dt=0.02, on_event=None):
+    """
+    amovel with REL mode.
+    rel6: [dx,dy,dz,dRx,dRy,dRz]
+    """
+    from DSR_ROBOT2 import amovel, posx, DR_MV_MOD_REL, wait_motion_done, wait
+    amovel(posx(rel6), v=vel, a=acc, mod=DR_MV_MOD_REL)
+
+    while True:
+        done = wait_motion_done(timeout=poll_dt)
+        if done:
+            return True
+        if on_event is not None and on_event():
+            return False
+        wait(poll_dt)
+
+def handle_collision_and_drop(step_id, holding):
+    """
+    Collision handler: stop, go to drop zone (if configured), open gripper.
+    Uses global DROP_ZONE_JOINT (loaded from YAML earlier).
+    Returns updated holding flag.
+    """
+    emergency_stop_motion()
+
+    global DROP_ZONE_JOINT
+
+    if holding and DROP_ZONE_JOINT:
+        log_info(step_id, "Collision -> Go DROP_ZONE and release")
+        try:
+            from DSR_ROBOT2 import movej, posj
+            movej(posj(DROP_ZONE_JOINT), vel=60, acc=60)  # 안전을 위해 동기 이동 추천
+            gripper_open()
+            holding = False
+        except Exception as e:
+            print(f"[WARN] drop zone move failed: {e}")
+
+    return holding
 
 # =========================================================
 # 3. Insertion Logic (from insert_card_slot)
@@ -445,64 +530,125 @@ def perform_task():
         wait(0.5)
         log_info(step_id, "Cycle Completed")
 
-    # --- 3. Stage B: Shelf 2 -> Mid -> Tilt -> Place (3 Cycles) ---
-    log_info("Stage B", f"Starting Shelf 2 -> Tilt -> Place Loop ({cycle_count} cycles)")
-    
-    import random
+   # --- 3. Stage B: Shelf 2 -> Mid -> Tilt -> Place (3 Cycles) ---
+log_info("Stage B", f"Starting Shelf 2 -> Tilt -> Place Loop ({cycle_count} cycles)")
 
-# 3회 중 2회 성공, 1회 실패 (순서는 랜덤)
-    results = [True, True, False]
-    random.shuffle(results)
+import random
+results = [True, True, False]
+random.shuffle(results)
 
-    for i in range(cycle_count):
+holding = False  # 현재 집고 있는지 여부(충돌 시 drop_zone 처리에 사용)
 
-        step_id = f"B-{i+1}"
-        is_success = results[i]
-        # 3.1 Pick from Shelf 2
-        log_info(step_id, f"Moving to Shelf 2 Pose {i+1} (Pick)")
-        move_joint(JOINT_POSES_SHELF_2[i])
-        wait(0.2)
-        
-        movel(posx(0, 0, -50, 0, 0, 0), vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_FAST, mod=DR_MV_MOD_REL)
+for i in range(cycle_count):
+    step_id = f"B-{i+1}"
+    is_success = results[i]
 
-        log_info(step_id, "Gripper CLOSE")
-        gripper_close()
-        wait(0.2)
+    # 3.1 Pick from Shelf 2 (비동기 + 감시)
+    log_info(step_id, f"Moving to Shelf 2 Pose {i+1} (Pick)")
+    ok = async_movej_and_monitor(
+        JOINT_POSES_SHELF_2[i],
+        vel=100, acc=100,
+        on_event=lambda: detect_collision_fz(15.0)
+    )
+    if not ok:
+        log_info(step_id, "Collision while moving to shelf2 pick pose.")
+        holding = handle_collision_and_drop(step_id, holding)
+        continue
 
-        movel(posx(0, 0,  50, 0, 0, 0), vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_FAST, mod=DR_MV_MOD_REL)
-        
-        # 3.2 Move to Transition Point
-        if Q_WAYPOINT_TRANSITION:
-            log_info(step_id, "Moving to Transition Waypoint")
-            move_joint(Q_WAYPOINT_TRANSITION)
-            wait(0.2)
-        
-        if is_success:
-            cur6 = list(_pose_from_current())
-            cur6[1] = cur6[1] + 200
+    # 내려가기 (REL, 비동기)
+    ok = async_movel_rel_and_monitor(
+        [0, 0, -50, 0, 0, 0],
+        vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_FAST,
+        on_event=lambda: detect_collision_fz(15.0)
+    )
+    if not ok:
+        log_info(step_id, "Collision while descending.")
+        holding = handle_collision_and_drop(step_id, holding)
+        continue
 
-            p_work = _pose_same(cur6)
-            p_tilt = _pose_tilt_from_pose(cur6, DIR_S3_TILT_SIGN * ANGLE_S3_TILT_DEG)
+    # 집기
+    log_info(step_id, "Gripper CLOSE")
+    gripper_close()
+    holding = True
 
-            log_info(step_id, f"[SUCCESS] Move to Y+120 then Tilt {DIR_S3_TILT_SIGN * ANGLE_S3_TILT_DEG} deg")
-            movel(p_tilt, vel=VEL_LINEAR_APPROACH, acc=ACC_LINEAR_APPROACH)
-            wait(0.1)
+    # 들어올리기 (REL, 비동기)
+    ok = async_movel_rel_and_monitor(
+        [0, 0, 50, 0, 0, 0],
+        vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_FAST,
+        on_event=lambda: detect_collision_fz(15.0)
+    )
+    if not ok:
+        log_info(step_id, "Collision while lifting.")
+        holding = handle_collision_and_drop(step_id, holding)
+        continue
 
-            log_info(step_id, "Gripper OPEN (Drop)")
-            gripper_open()
-            wait(0.2)
+    # 3.2 Move to Transition Point (비동기 + 감시)
+    if Q_WAYPOINT_TRANSITION:
+        log_info(step_id, "Moving to Transition Waypoint")
+        ok = async_movej_and_monitor(
+            Q_WAYPOINT_TRANSITION,
+            vel=100, acc=100,
+            on_event=lambda: detect_collision_fz(15.0)
+        )
+        if not ok:
+            log_info(step_id, "Collision while moving to transition.")
+            holding = handle_collision_and_drop(step_id, holding)
+            continue
 
-            log_info(step_id, "Restoring Orientation")
-            movel(p_work, vel=VEL_LINEAR_APPROACH, acc=ACC_LINEAR_APPROACH)
-            wait(0.1)
+    # 3.3 Success / Fail Branch
+    if is_success:
+        # 현재 위치 기반으로 work/tilt pose 생성
+        cur6 = list(_pose_from_current())
+        cur6[1] += 200
 
-        else:
-            log_info(step_id, "[FAIL] Drop at TRANSITION waypoint (OPEN only)")
-            if Q_WAYPOINT_TRANSITION:
-                wait(0.1)
+        p_work = _pose_same(cur6)
+        p_tilt = _pose_tilt_from_pose(cur6, DIR_S3_TILT_SIGN * ANGLE_S3_TILT_DEG)
 
-            gripper_open()
-            wait(0.2)
+        log_info(step_id, f"[SUCCESS] Tilt {DIR_S3_TILT_SIGN * ANGLE_S3_TILT_DEG} deg")
+        ok = async_movel_and_monitor(
+            p_tilt,
+            vel=VEL_LINEAR_APPROACH, acc=ACC_LINEAR_APPROACH,
+            on_event=lambda: detect_collision_fz(15.0)
+        )
+        if not ok:
+            log_info(step_id, "Collision during tilt.")
+            holding = handle_collision_and_drop(step_id, holding)
+            continue
+
+        # 드롭
+        log_info(step_id, "Gripper OPEN (Drop)")
+        gripper_open()
+        holding = False
+
+        # 자세 복원
+        log_info(step_id, "Restoring Orientation")
+        ok = async_movel_and_monitor(
+            p_work,
+            vel=VEL_LINEAR_APPROACH, acc=ACC_LINEAR_APPROACH,
+            on_event=lambda: detect_collision_fz(15.0)
+        )
+        if not ok:
+            log_info(step_id, "Collision during restore.")
+            holding = handle_collision_and_drop(step_id, holding)
+            continue
+
+    else:
+        # 실패 케이스: Transition에서 바로 드롭
+        log_info(step_id, "[FAIL] Drop at TRANSITION waypoint (OPEN only)")
+        gripper_open()
+        holding = False
+
+        # (선택) 실패 후 안전 리트랙(위로 50mm)
+        ok = async_movel_rel_and_monitor(
+            [0, 0, 50, 0, 0, 0],
+            vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_FAST,
+            on_event=lambda: detect_collision_fz(15.0)
+        )
+        if not ok:
+            log_info(step_id, "Collision while retracting after FAIL drop.")
+            holding = handle_collision_and_drop(step_id, holding)
+            continue
+
     # --- 4. Final Homing ---
 
     log_info("End", "Moving Home")
