@@ -379,9 +379,14 @@ def perform_task():
         log_info(step_id, f"Joint Move -> {JOINT_POSES_SHELF_1[i]}")
         move_joint(JOINT_POSES_SHELF_1[i])
         entry_point = get_current_posx()
-        entry_point[0][0]=entry_point[0][0] +17
+        if cycle_count == 0:
+            entry_point[0][0]=entry_point[0][0] +10
+        else:
+            entry_point[0][0]=entry_point[0][0] +12
         if cycle_count == 2:
-            entry_point[0][1]=entry_point[0][1] -103
+            entry_point[0][1]=entry_point[0][1] -133
+        elif cycle_count == 0:
+            entry_point[0][1]=entry_point[0][1] -60
         else: 
             entry_point[0][1]=entry_point[0][1] -75
         entry_point[0][2]=entry_point[0][2] -25
@@ -433,8 +438,8 @@ def perform_task():
         # 2. Retract (Relative: z+50, then z+50 -> Total z+100)
     # 삽입된 위치에서 들어올리는 함수
     
-        movel(posx(0, 0, 50, 0, 0, 0), vel=VEL_LINEAR_APPROACH, acc=ACC_LINEAR_APPROACH, mod=DR_MV_MOD_REL)
-        movel(posx(0, 0, 50, 0, 0, 0), vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_FAST, mod=DR_MV_MOD_REL)
+        # movel(posx(0, 0, 50, 0, 0, 0), vel=VEL_LINEAR_APPROACH, acc=ACC_LINEAR_APPROACH, mod=DR_MV_MOD_REL)
+        movel(posx(0, 0, 100, 0, 0, 0), vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_FAST, mod=DR_MV_MOD_REL)
         
         wait(0.5)
         log_info(step_id, "Cycle Completed")
@@ -450,7 +455,7 @@ def perform_task():
 
     for i in range(cycle_count):
         step_id = f"B-{i+1}"
-        
+        is_success = results[i]
         # 3.1 Pick from Shelf 2
         log_info(step_id, f"Moving to Shelf 2 Pose {i+1} (Pick)")
         move_joint(JOINT_POSES_SHELF_2[i])
@@ -470,9 +475,9 @@ def perform_task():
             move_joint(Q_WAYPOINT_TRANSITION)
             wait(0.2)
         
-        if True:
+        if is_success:
             cur6 = list(_pose_from_current())
-            cur6[1] = cur6[1] + 170
+            cur6[1] = cur6[1] + 200
 
             p_work = _pose_same(cur6)
             p_tilt = _pose_tilt_from_pose(cur6, DIR_S3_TILT_SIGN * ANGLE_S3_TILT_DEG)
@@ -497,6 +502,7 @@ def perform_task():
             gripper_open()
             wait(0.2)
     # --- 4. Final Homing ---
+
     log_info("End", "Moving Home")
     move_home_joint()
     log_info("End", "All tasks completed successfully.")
