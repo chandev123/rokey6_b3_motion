@@ -351,6 +351,7 @@ def perform_task():
     OFFSET_S1_APPROACH_X = get_config_val('poses.shelf_1.approach_x_offset', 20.0)
     OFFSET_S1_RETRACT_X = get_config_val('poses.shelf_1.retract_x_offset', -10.0)
     WAIT_GRIPPER_STABILIZE_SEC = get_config_val('poses.shelf_1.wait_stabilize_sec', 0.5)
+    DROP_ZONE_JOINT = get_config_val('poses.drop_zone_joint', [])
 
     JOINT_POSES_SHELF_2 = get_config_val('poses.shelf_2.joint_poses', [])
     WAIT_INSPECTION_SEC = get_config_val('poses.shelf_3_tilt.wait_inspection_sec', 2.0)
@@ -379,8 +380,8 @@ def perform_task():
         log_info(step_id, f"Joint Move -> {JOINT_POSES_SHELF_1[i]}")
         move_joint(JOINT_POSES_SHELF_1[i])
         entry_point = get_current_posx()
-        if cycle_count == 0:
-            entry_point[0][0]=entry_point[0][0] +10
+        if cycle_count == 1:
+            entry_point[0][0]=entry_point[0][0] +5
         else:
             entry_point[0][0]=entry_point[0][0] +12
         if cycle_count == 2:
@@ -390,7 +391,7 @@ def perform_task():
         else: 
             entry_point[0][1]=entry_point[0][1] -75
         entry_point[0][2]=entry_point[0][2] -25
-        movel(entry_point[0], v=50, a=50)
+        movel(entry_point[0], v=70, a=70)
 
         wait(0.2)
 
@@ -454,6 +455,7 @@ def perform_task():
     random.shuffle(results)
 
     for i in range(cycle_count):
+
         step_id = f"B-{i+1}"
         is_success = results[i]
         # 3.1 Pick from Shelf 2
