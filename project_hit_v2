@@ -161,7 +161,7 @@ def _pose_tilt_from_pose(p6, pitch_delta):
     return posx([x, y, z, A, B2, C])
 
 # =========================================================
-# MoveStop(QSTOP=0)
+# MoveStop(QSTOP=1)
 # =========================================================
 def init_move_stop_client(node):
     global _stop_cli
@@ -176,7 +176,7 @@ def init_move_stop_client(node):
 
 def emergency_stop_motion(node=None):
     """
-    ✅ 즉시 정지: MoveStop(QSTOP=0)
+    ✅ 즉시 정지: MoveStop(QSTOP=1)
     node 인자를 안 주면 전역 _MAIN_NODE 사용
     """
     global _stop_cli, _MAIN_NODE
@@ -196,7 +196,7 @@ def emergency_stop_motion(node=None):
 
     try:
         req = MoveStop.Request()
-        req.stop_mode = 0  # ✅ QSTOP(0)
+        req.stop_mode = 1  # ✅ QSTOP(1)
         _stop_cli.call_async(req)
     except Exception as e:
         print(f"[WARN] emergency_stop_motion(MoveStop) failed: {e}")
@@ -273,7 +273,7 @@ def movel_rel_step(rel6_total, step_mm=5.0, vel=VEL_LINEAR_FAST, acc=ACC_LINEAR_
 # MAIN TASK (Stage A + Stage B)
 # =========================================================
 def perform_task(node):
-    from DSR_ROBOT2 import movel, posx, wait, DR_MV_MOD_REL, movej, posj
+    from DSR_ROBOT2 import movel, get_current_posx,posx, wait, DR_MV_MOD_REL, movej, posj
 
     log_info("Init", "Starting Task Sequence...")
 
@@ -313,6 +313,7 @@ def perform_task(node):
         move_joint(JOINT_POSES_SHELF_1[i])
 
         entry_point = get_current_posx()
+        entry_point = [list(entry_point[0]),entry_point[1]]
 
         if cycle_count == 1:
             entry_point[0][0] = entry_point[0][0]
@@ -365,7 +366,7 @@ def perform_task(node):
         log_info(step_id, "Stage A cycle completed")
 
     # =========================================================
-    # Stage B (MoveStop(QSTOP=0) + step move + pending drop)
+    # Stage B (MoveStop(QSTOP=1) + step move + pending drop)
     # =========================================================
     log_info("Stage B", f"Starting Stage B ({cycle_count} cycles)")
 
